@@ -1,5 +1,7 @@
 package edu.buffalo.cse.cse486586.simpledynamo;
 
+import android.util.Log;
+
 /**
  * Similiar to GroupMessenger2, this class creates a message with fields
  * Key , Value, hash(Key), messageType, originPort, remotePort, predPort , succPort
@@ -10,7 +12,7 @@ package edu.buffalo.cse.cse486586.simpledynamo;
 public class Message {
     public String key,value, hashKey, messageType;
     public String originPort, remotePort;
-    public String predPort, succPort; //use only in case of NODE_ADDED message
+//    public String predPort, succPort; //use only in case of NODE_ADDED message
 
     Message() {
 
@@ -22,8 +24,8 @@ public class Message {
         this.messageType = m1.messageType;
         this.originPort  = m1.originPort;
         this.remotePort  = m1.remotePort;
-        this.predPort    = m1.predPort;
-        this.succPort    = m1.succPort;
+//        this.predPort    = m1.predPort;
+//        this.succPort    = m1.succPort;
     }
     Message(String text) {
         this.reconstructMessage(text);
@@ -51,7 +53,7 @@ public class Message {
 
     /** split the incomingMessage and fill in the details in "this" object**/
     public void reconstructMessage(String incomingMessage) {
-
+        Log.e("reconstructMessage","incomingMessage "  + incomingMessage);
         String[] msgs = incomingMessage.split(";");
         try {
             this.key = msgs[0];
@@ -60,8 +62,8 @@ public class Message {
             this.messageType= msgs[3];
             this.originPort = msgs[4];
             this.remotePort = msgs[5];
-            this.predPort   = msgs[6];
-            this.succPort   = msgs[7];
+//            this.predPort   = msgs[6];
+//            this.succPort   = msgs[7];
         }
         catch(Exception ex) {
             ex.printStackTrace();
@@ -75,9 +77,7 @@ public class Message {
                 + this.hashKey     + ";"
                 + this.messageType + ";"
                 + this.originPort  + ";"
-                + this.remotePort  + ";"
-                + this.predPort    + ";"
-                + this.succPort    + ";";
+                + this.remotePort  + ";";
     }
     /**
      *
@@ -89,9 +89,7 @@ public class Message {
                 + "hashKey:"     + this.hashKey  + ";"
                 + "messageType:"      + this.messageType + ";"
                 + "originPort:"     + this.originPort  + ";"
-                + "remotePort:"     + this.remotePort  + ";"
-                + "remotePort:"     + this.predPort  + ";"
-                + "remotePort:"     + this.succPort  + ";";
+                + "remotePort:"     + this.remotePort  + ";";
     }
 
 }

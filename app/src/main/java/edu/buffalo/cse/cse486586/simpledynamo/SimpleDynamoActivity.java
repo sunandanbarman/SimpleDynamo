@@ -25,11 +25,7 @@ public class SimpleDynamoActivity extends Activity {
 	public Cursor resultCursor;
 
 	public static SQLHelperClass sql;
-	/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
-	public static String INSERT   = "INSERT"; //insert the data + asks for replication
-	public static String REPLICATE= "REPLICATE";  //does the replication
-	public static String QUERY_LOOKUP = "QUERY_LOOKUP";  // used by originator for both "@" and "*" query
-	/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
+	/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 	public static SimpleDynamoActivity getInstance() {
 		return singleActivity;
 	}
@@ -52,10 +48,15 @@ public class SimpleDynamoActivity extends Activity {
         tv.setMovementMethod(new ScrollingMovementMethod());
 
 		final TextView editText = (TextView) findViewById(R.id.editText);
-
+		/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 		findViewById(R.id.btnSend).setOnClickListener(new View.OnClickListener() {
 			@Override
 			public void onClick(View v) {
+				if (editText.getText().toString().equalsIgnoreCase("")) {
+					Log.e(TAG,"Please enter something");
+					return;
+				}
+
 				ContentValues cv = new ContentValues();
 				cv.put(KEY_FIELD, editText.getText().toString());
 
@@ -69,6 +70,100 @@ public class SimpleDynamoActivity extends Activity {
 
 			}
 		});
+		findViewById(R.id.btnQueryText).setOnClickListener(
+				new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+
+						resultCursor = getContentResolver().query(contentURI, null,
+								editText.getText().toString(), null, null);
+						if (resultCursor == null) {
+							Log.e(TAG, "Data not found");
+						}
+						resultCursor.close();
+					}
+				});
+
+		findViewById(R.id.btnClear).setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				tv.setText("");
+			}
+		});
+		findViewById(R.id.btnLDump).setOnClickListener(
+				new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						resultCursor = getContentResolver().query(contentURI, null,
+								LDumpSelection, null, null);
+						if (resultCursor == null) {
+							Log.e(TAG, "Result null");
+
+						}
+
+						int keyIndex = resultCursor.getColumnIndex(KEY_FIELD);
+						int valueIndex = resultCursor.getColumnIndex(VALUE_FIELD);
+						if (keyIndex == -1 || valueIndex == -1) {
+							Log.e(TAG, "Wrong columns");
+							resultCursor.close();
+
+						}
+
+						resultCursor.moveToFirst();
+						tv.append("************LDump starts******\n");
+						while (!resultCursor.isAfterLast()) {
+							String key = resultCursor.getString(keyIndex);
+							String val = resultCursor.getString(valueIndex);
+							Log.e(TAG, " key :" + key + " value :" + val);
+							tv.append(key + "=" + val);
+							tv.append("\n");
+							resultCursor.moveToNext();
+						}
+						tv.append("\n************LDump ends******");
+						Log.e(TAG, "Found rows are :" + String.valueOf(resultCursor.getCount()));
+
+						resultCursor.close();
+					}
+				});
+
+		findViewById(R.id.btnGDump).setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				resultCursor = getContentResolver().query(contentURI, null, GDumpSelection, null, null);
+				if (resultCursor == null) {
+
+					Log.e(TAG, "resultCursor null");
+					return;
+				}
+				int keyIndex = resultCursor.getColumnIndex(KEY_FIELD);
+				int valueIndex = resultCursor.getColumnIndex(VALUE_FIELD);
+				if (keyIndex == -1 || valueIndex == -1) {
+					Log.e(TAG, "Wrong columns");
+					resultCursor.close();
+
+				}
+
+				resultCursor.moveToFirst();
+				tv.append("************GDump starts******\n");
+				while (!resultCursor.isAfterLast()) {
+					String key = resultCursor.getString(keyIndex);
+					String val = resultCursor.getString(valueIndex);
+					Log.e(TAG, " key :" + key + " value :" + val);
+					tv.append(key + "=" + val);
+					tv.append("\n");
+					resultCursor.moveToNext();
+				}
+				tv.append("\n************GDump ends******");
+				Log.e(TAG, "Found rows are :" + String.valueOf(resultCursor.getCount()));
+
+				resultCursor.close();
+
+				if (resultCursor != null)
+					resultCursor.close();
+
+			}
+		});
+		/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 		if (singleActivity == null)
 			singleActivity = this;
 	}

@@ -25,10 +25,10 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:id="@+id/textView"
-        android:layout_alignTop="@+id/textView1"
         android:layout_alignParentStart="true"
         android:layout_alignParentEnd="true"
-        android:layout_above="@+id/editText" />
+        android:layout_above="@+id/editText"
+        android:layout_below="@+id/btnLDump" />
 
     <EditText
         android:layout_width="wrap_content"
@@ -46,4 +46,40 @@
         android:id="@+id/btnSend"
         android:layout_alignParentBottom="true"
         android:layout_alignParentEnd="true" />
+
+    <Button
+        style="?android:attr/buttonStyleSmall"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="C"
+        android:id="@+id/btnClear"
+        android:layout_alignParentBottom="true"
+        android:layout_toStartOf="@+id/btnSend" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Q"
+        android:id="@+id/btnQueryText"
+        android:layout_alignParentBottom="true"
+        android:layout_toStartOf="@+id/btnClear" />
+
+    <Button
+        style="?android:attr/buttonStyleSmall"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="LDump"
+        android:id="@+id/btnLDump"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentStart="true" />
+
+    <Button
+        style="?android:attr/buttonStyleSmall"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="GDump"
+        android:id="@+id/btnGDump"
+        android:layout_alignTop="@+id/textView1"
+        android:layout_toEndOf="@+id/btnLDump" />
+
 </RelativeLayout>

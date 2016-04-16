@@ -6,6 +6,7 @@ import android.util.Log;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
@@ -27,20 +28,26 @@ public class ClientTask extends AsyncTask<Message,Void,Void> {
         }
         Socket socket;
         OutputStream outputStream;
-        DataOutputStream dataOutputStream;
+        PrintWriter printWriter;
+//        DataOutputStream dataOutputStream;
         try {
             socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                     Integer.valueOf(message.remotePort));
 
             socket.setSoTimeout(SimpleDynamoProvider.TIMEOUT);
             socket.setSoTimeout(SimpleDynamoProvider.TIMEOUT);
-            outputStream    = socket.getOutputStream();
+
+            outputStream = socket.getOutputStream();
+            printWriter  = new PrintWriter(outputStream);
+            printWriter.println(message.deconstructMessage());
+            printWriter.flush();
+            /*outputStream    = socket.getOutputStream();
             dataOutputStream= new DataOutputStream(outputStream);
             String tempMsg  = message.deconstructMessage();
-
+            Log.e("ClientTask","message before sending " + tempMsg);
             dataOutputStream.write(tempMsg.getBytes());
             dataOutputStream.flush();
-
+            */
             socket.close();
         } catch(SocketTimeoutException ex) {
             ex.printStackTrace();

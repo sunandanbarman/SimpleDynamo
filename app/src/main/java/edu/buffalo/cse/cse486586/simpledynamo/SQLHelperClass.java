@@ -15,7 +15,7 @@ import android.util.Log;
 class SQLHelperClass extends  SQLiteOpenHelper{
     private String TAG = SQLHelperClass.class.getName();
     private static String DB_TABLE = "Data";
-    private static String DB_NAME  = "SimpleDht.db";
+    private static String DB_NAME  = "SimpleDynamo.db";
     public static int DB_VERSION = 1;
 
     private static SQLHelperClass instance_;

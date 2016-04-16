@@ -5,9 +5,11 @@ import android.database.Cursor;
 import android.os.AsyncTask;
 import android.util.Log;
 
+import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.StreamCorruptedException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -88,34 +90,34 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
      * @param
      * @return
      */
-//    private HashMap<String,String> getAllKeysAndValues(Cursor cursor) {
-//        HashMap<String,String> list = new HashMap<String, String>();
-//        if (cursor == null || cursor.getCount() == 0) {
-//            return list;
-//        }
-//        int keyIndex  = cursor.getColumnIndex(SimpleDhtActivity.KEY_FIELD);
-//        int valueIndex= cursor.getColumnIndex(SimpleDhtActivity.VALUE_FIELD);
-//
-//        cursor.moveToFirst();
-//        while(!cursor.isAfterLast()) {
-//            String key  = cursor.getString(keyIndex);
-//            String value= cursor.getString(valueIndex);
-//            if (list.get(SimpleDhtActivity.KEY_FIELD) == null) {
-//                list.put(SimpleDhtActivity.KEY_FIELD,key);
-//            } else {
-//                list.put(SimpleDhtActivity.KEY_FIELD,new StringBuilder(list.get(SimpleDhtActivity.KEY_FIELD)).append(":").append(key).toString());
-//            }
-//
-//            if (list.get(SimpleDhtActivity.VALUE_FIELD) == null) {
-//                list.put(SimpleDhtActivity.VALUE_FIELD,value);
-//            } else {
-//                list.put(SimpleDhtActivity.VALUE_FIELD,new StringBuilder(list.get(SimpleDhtActivity.VALUE_FIELD)).append(":").append(value).toString());
-//            }
-//
-//            cursor.moveToNext();
-//        }
-//        return list;
-//    }
+    private HashMap<String,String> getAllKeysAndValues(Cursor cursor) {
+        HashMap<String,String> list = new HashMap<String, String>();
+        if (cursor == null || cursor.getCount() == 0) {
+            return list;
+        }
+        int keyIndex  = cursor.getColumnIndex(SimpleDynamoActivity.KEY_FIELD);
+        int valueIndex= cursor.getColumnIndex(SimpleDynamoActivity.VALUE_FIELD);
+
+        cursor.moveToFirst();
+        while(!cursor.isAfterLast()) {
+            String key  = cursor.getString(keyIndex);
+            String value= cursor.getString(valueIndex);
+            if (list.get(SimpleDynamoActivity.KEY_FIELD) == null) {
+                list.put(SimpleDynamoActivity.KEY_FIELD,key);
+            } else {
+                list.put(SimpleDynamoActivity.KEY_FIELD,new StringBuilder(list.get(SimpleDynamoActivity.KEY_FIELD)).append(":").append(key).toString());
+            }
+
+            if (list.get(SimpleDynamoActivity.VALUE_FIELD) == null) {
+                list.put(SimpleDynamoActivity.VALUE_FIELD,value);
+            } else {
+                list.put(SimpleDynamoActivity.VALUE_FIELD,new StringBuilder(list.get(SimpleDynamoActivity.VALUE_FIELD)).append(":").append(value).toString());
+            }
+
+            cursor.moveToNext();
+        }
+        return list;
+    }
 
     private ContentValues constructContentValue(Message message) {
         ContentValues cv = new ContentValues();
@@ -135,31 +137,36 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
         ServerSocket serverSocket = sockets[0];
         Socket clientSocket;
         InputStream inputStream;
-        DataInputStream dataInputStream;
-        byte[] msgIncoming = new byte[SimpleDynamoProvider.MAX_MSG_LENGTH];
-
+        //DataInputStream dataInputStream;
+        BufferedReader reader = null;
+        //byte[] msgIncoming = new byte[SimpleDynamoProvider.MAX_MSG_LENGTH];
+        String msgIncoming;
         try {
             while(true) {
                 clientSocket = serverSocket.accept();
                 try {
-                    inputStream = clientSocket.getInputStream();
+                    /*inputStream = clientSocket.getInputStream();
                     dataInputStream = new DataInputStream(inputStream);
                     dataInputStream.read(msgIncoming);
-
-                    Message message = new Message(new String(msgIncoming));
-                    if (!msgIncoming.equals(null) && msgIncoming.equals("")) {
+                    */
+                    //inputStream = clientSocket.getInputStream();
+                    reader      = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                    msgIncoming = reader.readLine();
+                    if (!msgIncoming.equals(null) && !msgIncoming.equals("")) {
                         Log.e(TAG,"msgReceived " + msgIncoming);
                     }
+
+                    Message message = new Message(new String(msgIncoming));
                     clientSocket.close(); //release the connection, process the message
                     //Log.e(TAG," message t");
                     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
-                    if (message.messageType.equalsIgnoreCase(SimpleDynamoActivity.INSERT)) {
+                    if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT)) {
                         Log.e(TAG, "INSERT message found from  " + message.originPort);
                         /*ContentValues cv = new ContentValues();
                         cv.put(SimpleDynamoActivity.KEY_FIELD, message.key);
                         cv.put(SimpleDynamoActivity.VALUE_FIELD, message.value);
                         */
-                        SimpleDynamoProvider.insertIntoDatabase(constructContentValue(message));
+                        SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
                         /*Replicate into 2 next successors here*/
                         String first_Succ = SimpleDynamoProvider.dynamoList.getSuccessor(
                                             SimpleDynamoProvider.node_id);
@@ -167,19 +174,60 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                         String second_Succ= SimpleDynamoProvider.dynamoList.getSuccessor(first_Succ);
                         Log.e(TAG,"second_Succ " + second_Succ);
                         /*Replication 1*/
+
                         message.originPort  = SimpleDynamoProvider.myPort;
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(first_Succ);
                         Log.e(TAG,"First succ port " + message.remotePort);
-                        message.messageType = SimpleDynamoActivity.REPLICATE;
-                        SimpleDynamoProvider.sendMessageToRemotePort(message);
+                        message.messageType = SimpleDynamoProvider.REPLICATE;
+                        SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
                         /*Replication 2*/
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
                         Log.e(TAG,"Second succ port " + message.remotePort);
                         SimpleDynamoProvider.sendMessageToRemotePort(message);
-                    } else if (message.messageType.equalsIgnoreCase(SimpleDynamoActivity.REPLICATE)) {
-                        SimpleDynamoProvider.insertIntoDatabase(constructContentValue(message));
+                    } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.REPLICATE)) {
+                        Log.e(TAG,"REPLICATE message " + message.toString() + " received ");
+                        SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
 
+                    } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.QUERY_GET_DATA)) {
+                        /*Used by remote ports to ask for data from the database, "key" can be either specific text, or "@" parameter*/
+                        Log.e(TAG, "QUERY_GET_DATA, To query " + message.key);
+                        Cursor cursor = SimpleDynamoProvider.getInstance().returnLocalData(message.key);
+                        if (cursor == null) {
+                            throw new Exception();
+                        }
+
+                        message.messageType = SimpleDynamoProvider.QRY_DATA_DONE;
+                        HashMap<String,String> list = getAllKeysAndValues(cursor);
+
+                        if (list.size() > 0) { //message.key will have all the key fields in colon-seperated format if parameter was GDump parameter
+                            message.key   = list.get(SimpleDynamoActivity.KEY_FIELD);
+                            message.value = list.get(SimpleDynamoActivity.VALUE_FIELD);
+                        } else { //safety condition
+                            message.key   = SimpleDynamoProvider.EMPTY;
+                            message.value = SimpleDynamoProvider.EMPTY;
+                        }
+
+                        Log.e(TAG,"DB key " + message.key);
+                        Log.e(TAG,"DB val " + message.value);
+                        //message.messageType = SimpleDynamoProvider.QRY_DATA_DONE;
+                        message.hashKey     = "dummy";
+                        message.remotePort  = message.originPort;
+                        message.originPort  = SimpleDynamoProvider.myPort;
+                        cursor.close();
+                        SimpleDynamoProvider.sendMessageToRemotePort(message);
+
+                    }  else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.QRY_DATA_DONE)) {
+                        /*Originator of Query lookup request receives this response and unlocks waiting content provider for processing*/
+                        Log.e(TAG,"Result of QRY_DATA_DONE from " + message.originPort + " is " + " key=" + message.key + " = " + message.value);
+
+                        SimpleDynamoProvider.queryKey  = message.key;
+                        SimpleDynamoProvider.queryValue= message.value;
+                        synchronized (SimpleDynamoProvider.lock) {
+                            SimpleDynamoProvider.queryDone = true;
+                            SimpleDynamoProvider.lock.notifyAll();
+                        }
                     }
+
 //                    if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.ALIVE)) { //New node joined chord ring
 //                        Log.e(TAG, "ALIVE message found from " + message.originPort);
 //                        Log.e(TAG, "to add " + message.originPort);
@@ -222,11 +270,11 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 //                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.INSERT_LOOKUP)) { //route message for inserting message
 //                        Log.e(TAG, "Insert_Lookup request found from  " + message.originPort);
 //                        ContentValues cv = new ContentValues();
-//                        cv.put(SimpleDhtActivity.KEY_FIELD,message.key);
-//                        cv.put(SimpleDhtActivity.VALUE_FIELD, message.value);
+//                        cv.put(SimpleDynamoActivity.KEY_FIELD,message.key);
+//                        cv.put(SimpleDynamoActivity.VALUE_FIELD, message.value);
 //
-//                        cv.put(SimpleDhtActivity.PORT, message.originPort);
-//                        SimpleDhtProvider.getInstance().insert(SimpleDhtActivity.contentURI, cv);
+//                        cv.put(SimpleDynamoActivity.PORT, message.originPort);
+//                        SimpleDhtProvider.getInstance().insert(SimpleDynamoActivity.contentURI, cv);
 //
 //                    }
 //                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.QUERY_LOOKUP)) {
@@ -261,8 +309,8 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 //                        HashMap<String,String> list = getAllKeysAndValues(cursor);
 //
 //                        if (list.size() > 0) { //message.key will have all the key fields in colon-seperated format if parameter was GDump parameter
-//                            message.key   = list.get(SimpleDhtActivity.KEY_FIELD);
-//                            message.value = list.get(SimpleDhtActivity.VALUE_FIELD);
+//                            message.key   = list.get(SimpleDynamoActivity.KEY_FIELD);
+//                            message.value = list.get(SimpleDynamoActivity.VALUE_FIELD);
 //                        } else { //safety condition
 //                            message.key   = SimpleDhtProvider.EMPTY;
 //                            message.value = SimpleDhtProvider.EMPTY;
@@ -310,7 +358,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 //                    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 //                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.DELETE_DATA)) {
 //                        Log.e(TAG,"Delete request found from " + message.originPort + " selection parameter "  + message.key );
-//                        SimpleDhtActivity.sql.deleteDataFromTable(message.key);
+//                        SimpleDynamoActivity.sql.deleteDataFromTable(message.key);
 //
 //                    }
 
