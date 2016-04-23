@@ -24,7 +24,7 @@ public class SimpleDynamoActivity extends Activity {
 	public static TextView tv;
 	public Cursor resultCursor;
 
-	public static SQLHelperClass sql;
+
 	/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 	public static SimpleDynamoActivity getInstance() {
 		return singleActivity;
@@ -42,7 +42,7 @@ public class SimpleDynamoActivity extends Activity {
 		super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_simple_dynamo);
 		contentURI = buildUri("content", "edu.buffalo.cse.cse486586.simpledynamo.provider");
-		sql = SQLHelperClass.getInstance(getApplicationContext());
+		//sql = SQLHelperClass.getInstance(getApplicationContext());
 
 		tv = (TextView) findViewById(R.id.textView1);
         tv.setMovementMethod(new ScrollingMovementMethod());

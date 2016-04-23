@@ -34,6 +34,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     public static final int SERVER_PORT      = 10000;
 
     public static SimpleDynamoProvider singleInstance;
+    public static SQLHelperClass sql;
     public final static Object lock =  new Object();
 
     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
@@ -99,7 +100,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 //        }
 //        return false;
 //    }
-    public String getLocationOfMessage(String key) {
+    public synchronized String getLocationOfMessage(String key) {
         Log.e(TAG,"***********To find location for key " + key);
         String hash = genHash(key);
         Log.e(TAG,"hash => " + hash + " for key " + key);
@@ -137,12 +138,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     }
     public long insertIntoDatabase(ContentValues cv) {
-        if (SimpleDynamoActivity.sql.insertValues(cv) == -1) {
+        if (sql.insertValues(cv) == -1) {
             Log.e(TAG, "Insertion into db failed for values :" + cv.toString());
             return -1;
         }
         Log.e(TAG,"Database insertion success for values " + cv.toString());
-        SimpleDynamoActivity.getInstance().setText(cv.toString());
+//        synchronized (this ) {
+            SimpleDynamoActivity.getInstance().setText(cv.toString());
+//        }
         return 0;
     }
     /**
@@ -159,6 +162,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     private void waitForResponse() {
         while(!queryDone) {
             synchronized (lock) {
+                Log.e("waitForResponse","waiting for response ");
                 try {
                     lock.wait(1000);
                 } catch (InterruptedException e) {
@@ -167,7 +171,9 @@ public class SimpleDynamoProvider extends ContentProvider {
                 }
             }
         }
-        queryDone = false;
+//        synchronized (lock) {
+            queryDone = false;
+//        }
     }
     /**
      * Return local data, either full database or specific key (dependent on parameter)
@@ -177,9 +183,9 @@ public class SimpleDynamoProvider extends ContentProvider {
     public Cursor returnLocalData(String selection) {
         Cursor c;
         if (selection == null || selection.equalsIgnoreCase(SimpleDynamoActivity.GDumpSelection))
-            c = SimpleDynamoActivity.sql.getData(null,null,null,null);
+            c = sql.getData(null,null,null,null);
         else
-            c=  SimpleDynamoActivity.sql.getData(null, "key=?",new String[]{selection}, null);
+            c=  sql.getData(null, "key=?",new String[]{selection}, null);
         return c;
     }
 
@@ -187,13 +193,13 @@ public class SimpleDynamoProvider extends ContentProvider {
     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 
 	@Override
-	public int delete(Uri uri, String selection, String[] selectionArgs) {
+	public synchronized int delete(Uri uri, String selection, String[] selectionArgs) {
         Log.e(TAG,"selection " + selection);
         int rowsAffected = 0;
         if (selection.equalsIgnoreCase(SimpleDynamoActivity.LDumpSelection)) {
             //delete all rows from local database
             Log.e(TAG,"LDump parameter. delete all rows from local DB");
-            rowsAffected = SimpleDynamoActivity.sql.deleteDataFromTable(null);
+            rowsAffected = sql.deleteDataFromTable(null);
             return rowsAffected;
         }
         String key ;
@@ -201,7 +207,7 @@ public class SimpleDynamoProvider extends ContentProvider {
             key = null;
         else
             key = selection;
-        rowsAffected    = SimpleDynamoActivity.sql.deleteDataFromTable(key);
+        rowsAffected    = sql.deleteDataFromTable(key);
         Message message = new Message(selection,"dummy",DELETE_DATA,myPort,"dummy");
         for(String node: dynamoList) {
 
@@ -238,6 +244,10 @@ public class SimpleDynamoProvider extends ContentProvider {
 //                return uri;
 //            }
 //        }
+        if (location.equalsIgnoreCase(myPort)) {
+            Log.e(TAG,"Insert into my db");
+            insertIntoDatabase(values);
+        }
         Log.e(TAG,"To send message "  + key + ":" + value + " to location " + location);
         Message message = new Message(key, value,INSERT,myPort,location);
         new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,message);
@@ -252,6 +262,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 	@Override
 	public boolean onCreate() {
+        sql = SQLHelperClass.getInstance(getContext());
         myPort = getMyPort();
         createServerSocket();
         if (singleInstance == null) {
@@ -292,9 +303,10 @@ public class SimpleDynamoProvider extends ContentProvider {
                 String remotePort = dynamoList.getPortFromPortHash(node);
                 message.remotePort = remotePort;
                 Log.e(TAG,"GDump parameter for node " + remotePort);
-
-                new ClientTask().execute(message);
-                waitForResponse();
+//                synchronized (lock) {
+                    new ClientTask().execute(message);
+                    waitForResponse();
+//                }
                 if (!SimpleDynamoProvider.queryKey.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)) {
                     String[] keyArr = SimpleDynamoProvider.queryKey.split(":");
                     String[] valArr = SimpleDynamoProvider.queryValue.split(":");
@@ -312,16 +324,20 @@ public class SimpleDynamoProvider extends ContentProvider {
         }
         else {
             /*specific key*/
-            c = SimpleDynamoActivity.sql.getData(null, "key=?",new String[]{selection}, null);
+            c = sql.getData(null, "key=?",new String[]{selection}, null);
             if ((c== null) || (c.getCount() == 0)) { //find the actual location
-                Log.e(TAG,"Not found in local DB ! To find actual location");
+                Log.e(TAG,"Not found in local DB ! To find actual location for message "  + selection);
                 String location = getLocationOfMessage(selection);
                 Log.e(TAG,"Actual location is " + location);
                 Message message = new Message(selection,"dummy",QUERY_GET_DATA,myPort,location);
-                new ClientTask().execute(message);
-                waitForResponse();
-                SimpleDynamoActivity.getInstance().setText("\n*** QUERY RESULTS **** ="  + SimpleDynamoProvider.queryKey + " :: " +
-                                                            SimpleDynamoProvider.queryValue + "\n");
+//                synchronized (lock) {
+                    new ClientTask().execute(message);
+                    waitForResponse();
+                    synchronized (lock) {
+                        SimpleDynamoActivity.getInstance().setText("\n*** QUERY RESULTS **** =" + SimpleDynamoProvider.queryKey + " :: " +
+                                SimpleDynamoProvider.queryValue + "\n");
+                    }
+//                }
                 String[] results = new String[]{SimpleDynamoProvider.queryKey, SimpleDynamoProvider.queryValue};
                 MatrixCursor matrixCursor = new MatrixCursor(new String[]{SimpleDynamoActivity.KEY_FIELD,SimpleDynamoActivity.VALUE_FIELD});
                 matrixCursor.addRow(results);

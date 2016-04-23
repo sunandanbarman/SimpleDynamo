@@ -162,11 +162,21 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
                     if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT)) {
                         Log.e(TAG, "INSERT message found from  " + message.originPort);
+                        /*Check if key already exists into local db, if yes then just replicate*/
                         /*ContentValues cv = new ContentValues();
                         cv.put(SimpleDynamoActivity.KEY_FIELD, message.key);
                         cv.put(SimpleDynamoActivity.VALUE_FIELD, message.value);
                         */
-                        SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
+                        Cursor cursor = SimpleDynamoProvider.getInstance().returnLocalData(message.key);
+                        if (cursor == null) {
+                            throw new Exception();
+                        }
+                        if (cursor.getCount() == 0) {
+                            Log.e(TAG,"TO insert " + message.toString() + " to local DB");
+                            SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
+                        } else
+                            Log.e(TAG,"Message " + message.toString() + " already in local DB");
+                        cursor.close();
                         /*Replicate into 2 next successors here*/
                         String first_Succ = SimpleDynamoProvider.dynamoList.getSuccessor(
                                             SimpleDynamoProvider.node_id);
@@ -183,7 +193,8 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                         /*Replication 2*/
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
                         Log.e(TAG,"Second succ port " + message.remotePort);
-                        SimpleDynamoProvider.sendMessageToRemotePort(message);
+                        SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
+
                     } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.REPLICATE)) {
                         Log.e(TAG,"REPLICATE message " + message.toString() + " received ");
                         SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
