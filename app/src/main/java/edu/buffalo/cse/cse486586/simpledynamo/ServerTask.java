@@ -10,10 +10,15 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.PrintWriter;
 import java.io.StreamCorruptedException;
+import java.lang.reflect.Array;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.TreeSet;
@@ -59,7 +64,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
     /**
      * Compare the oldChordList with new chord list to find out any node which had their successor and predecessor changed;
      * Used by AVD0 to notify them of the same.
-     * @param oldChordList
+     * @param
      * @return
      */
 //    private HashSet<String> getNodesWithNewPredAndSucc(ChordList<String> oldChordList) {
@@ -84,7 +89,23 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 //        }
 //        return result;
 //    }
+    private StringBuilder getReplicationCount(Cursor cursor) {
+        if (cursor == null || cursor.getCount() == 0) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        int replicationIndex = cursor.getColumnIndex(SimpleDynamoActivity.REPLICATE);
+        int replicationCount = 0;
+        cursor.moveToFirst();
 
+        while(!cursor.isAfterLast()) {
+            replicationCount = cursor.getInt(replicationIndex);
+            sb = sb.append(String.valueOf(replicationCount)).append(":");
+            cursor.moveToNext();
+        }
+        return sb;
+        //return  replicationList;
+    }
     /**
      * Extracts all the "key" and "value" fields from database and returns them in a colon-seperated format in the map
      * @param
@@ -126,6 +147,18 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
         return cv;
     }
 
+    private void sendReplicationMessageOnRecovery(String[] replArr,String[] keyArr,String[] valArr,Message message) {
+        for(int i=0; i < replArr.length; i++) {
+            if (Integer.valueOf(replArr[i]) > 0 ) {
+                message.key   = keyArr[i];
+                message.value = valArr[i];
+                Log.e("sendReplMsgOnRecovery","key " + message.key + ":" + message.value + ":" + replArr[i]);
+                SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
+            } else {
+                Log.e("sendReplMsgOnRecovery","key " + message.key + " NOT replicated");
+            }
+        }
+    }
     /**
      * Does a lookup on the message's hashkey and determines whether the message to this node, or to forward to successor node for further lookups
      * @return
@@ -136,20 +169,24 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 
         ServerSocket serverSocket = sockets[0];
         Socket clientSocket;
-        InputStream inputStream;
-        //DataInputStream dataInputStream;
-        BufferedReader reader = null;
-        //byte[] msgIncoming = new byte[SimpleDynamoProvider.MAX_MSG_LENGTH];
+        PrintWriter printWriter;
+        BufferedReader reader   = null;
+        OutputStream outputStream;
+
         String msgIncoming;
         try {
             while(true) {
                 clientSocket = serverSocket.accept();
+                clientSocket.setSoTimeout(SimpleDynamoProvider.TIMEOUT);
                 try {
-                    /*inputStream = clientSocket.getInputStream();
-                    dataInputStream = new DataInputStream(inputStream);
-                    dataInputStream.read(msgIncoming);
-                    */
-                    //inputStream = clientSocket.getInputStream();
+                    /*Send ACK message*/
+                    Message tempACK= new Message ("dummy","dummy",SimpleDynamoProvider.HEARTBEAT,SimpleDynamoProvider.myPort,
+                                                String.valueOf(clientSocket.getPort()),"-1"); // in step 1, no sequence number is required to be sent
+                    outputStream = clientSocket.getOutputStream();
+                    printWriter  = new PrintWriter(outputStream);
+                    printWriter.println(tempACK.deconstructMessage());
+                    printWriter.flush();
+                    /*Now wait for actual message*/
                     reader      = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                     msgIncoming = reader.readLine();
                     if (!msgIncoming.equals(null) && !msgIncoming.equals("")) {
@@ -157,16 +194,12 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                     }
 
                     Message message = new Message(new String(msgIncoming));
-                    clientSocket.close(); //release the connection, process the message
-                    //Log.e(TAG," message t");
+
+                    clientSocket.close();
                     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
                     if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT)) {
                         Log.e(TAG, "INSERT message found from  " + message.originPort);
                         /*Check if key already exists into local db, if yes then just replicate*/
-                        /*ContentValues cv = new ContentValues();
-                        cv.put(SimpleDynamoActivity.KEY_FIELD, message.key);
-                        cv.put(SimpleDynamoActivity.VALUE_FIELD, message.value);
-                        */
                         Cursor cursor = SimpleDynamoProvider.getInstance().returnLocalData(message.key);
                         if (cursor == null) {
                             throw new Exception();
@@ -189,7 +222,8 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(first_Succ);
                         Log.e(TAG,"First succ port " + message.remotePort);
                         message.messageType = SimpleDynamoProvider.REPLICATE;
-                        SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
+
+                         SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
                         /*Replication 2*/
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
                         Log.e(TAG,"Second succ port " + message.remotePort);
@@ -220,8 +254,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 
                         Log.e(TAG,"DB key " + message.key);
                         Log.e(TAG,"DB val " + message.value);
-                        //message.messageType = SimpleDynamoProvider.QRY_DATA_DONE;
-                        message.hashKey     = "dummy";
+
                         message.remotePort  = message.originPort;
                         message.originPort  = SimpleDynamoProvider.myPort;
                         cursor.close();
@@ -237,156 +270,129 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                             SimpleDynamoProvider.queryDone = true;
                             SimpleDynamoProvider.lock.notifyAll();
                         }
+                    } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.RECOVER)) {
+                        /*Check if there is any message in failure DB for the remote port
+                        * If yes, then send it over
+                        * If no, then just ignore the message*/
+                        Log.e(TAG,"RECOVER message from " + message.originPort);
+                        SimpleDynamoProvider.failedAVDList.remove(message.originPort);
+                        Cursor cursor = SimpleDynamoProvider.getInstance().returnFailureTableDataForRemote(message.originPort);
+                        if (cursor != null ) {
+                            message.messageType  = SimpleDynamoProvider.RECOVER_RESP;
+                            HashMap<String,String> list = getAllKeysAndValues(cursor);
+                            StringBuilder replicationList = getReplicationCount(cursor);
+
+                            if (list.size() > 0) { //message.key will have all the key fields in colon-seperated format if parameter was GDump parameter
+                                message.key   = list.get(SimpleDynamoActivity.KEY_FIELD);
+                                message.value = list.get(SimpleDynamoActivity.VALUE_FIELD);
+                                message.replicationCount = replicationList.toString();
+                                Log.e(TAG,"RECOVERY response DB key " + message.key);
+                                Log.e(TAG,"RECOVERY response DB val " + message.value);
+                                Log.e(TAG,"RECOVERY response repl count " + message.replicationCount );
+                            } else { //safety condition
+                                message.key   = SimpleDynamoProvider.EMPTY;
+                                message.value = SimpleDynamoProvider.EMPTY;
+                                Log.e(TAG,"No data found for recovery");
+                            }
+                            /*
+                            * Delete all the recovered keys from the failure table, no need to keep them now
+                            */
+
+                            message.remotePort  = message.originPort;
+                            message.originPort  = SimpleDynamoProvider.myPort;
+
+                            cursor.close();
+                            Log.e(TAG,"To inform " + message.remotePort + " for recovery message");
+                            SimpleDynamoProvider.sendMessageToRemotePort(message);
+                            Log.e(TAG,"Remove from failureTable for "  + message.remotePort);
+                            SimpleDynamoProvider.deleteFromFailureTable(message.key);
+                        } else
+                            Log.e(TAG,"");
+
+                    } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.RECOVER_RESP)) {
+                        Log.e(TAG,"RECOVER_RESP found from " + message.originPort);
+                        if (!message.key.equalsIgnoreCase(SimpleDynamoProvider.EMPTY) &&
+                            !message.value.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)    ) {
+                            String[] keyArr = message.key.split(":");
+                            String[] valArr = message.value.split(":");
+                            String[] replArr= message.replicationCount.split(":");
+                            Log.e(TAG,"Length Keys from port " + message.originPort + " = "   + keyArr.length);
+                            Log.e(TAG,"Length values from port " + message.originPort + " = " + valArr.length);
+                            Log.e(TAG,"Length replArr from port " + message.originPort + " = " + replArr.length);
+                            int replicationCount = 0;
+                            /*First insert the data into local DB*/
+                            for(int i=0; i < keyArr.length; i++) {
+                                Log.e(TAG,"RECOVER_RESP keys "  + keyArr[i] + ":" + valArr[i]);
+                                ContentValues contentValues = new ContentValues();
+                                contentValues.put(SimpleDynamoActivity.KEY_FIELD,keyArr[i]);
+                                contentValues.put(SimpleDynamoActivity.VALUE_FIELD,valArr[i]);
+
+                                SimpleDynamoProvider.getInstance().insertIntoDatabase(contentValues);
+                                //String[] results  = new String[]{keyArr[i],valArr[i]};
+                                //matrixCursor.addRow(results);
+                            }
+                            /*Now send out replication messages*/
+                            Log.e(TAG,"Now send recovery messages...");
+                            String first_Succ = SimpleDynamoProvider.dynamoList.getSuccessor(
+                                    SimpleDynamoProvider.node_id);
+                            Log.e(TAG,"first_Succ " + first_Succ);
+                            String second_Succ= SimpleDynamoProvider.dynamoList.getSuccessor(first_Succ);
+                            Log.e(TAG,"second_Succ " + second_Succ);
+                            /*Replication 1*/
+
+                            message.originPort  = SimpleDynamoProvider.myPort;
+                            message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(first_Succ);
+                            Log.e(TAG,"First succ port " + message.remotePort);
+                            message.messageType = SimpleDynamoProvider.REPLICATE;
+                            sendReplicationMessageOnRecovery(replArr,keyArr,valArr,message);
+//                            for(int i=0; i < replArr.length; i++) {
+//                                message.key   = keyArr[i];
+//                                message.value = valArr[i];
+//                                SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
+//                            }
+
+                            /*Replication 2*/
+                            message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
+                            Log.e(TAG,"Second succ port " + message.remotePort);
+                            sendReplicationMessageOnRecovery(replArr,keyArr,valArr,message);
+
+                        } else {
+                            Log.e(TAG,"No keys found from " + message.remotePort);
+                        }
                     }
 
-//                    if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.ALIVE)) { //New node joined chord ring
-//                        Log.e(TAG, "ALIVE message found from " + message.originPort);
-//                        Log.e(TAG, "to add " + message.originPort);
-//
-//                        ChordList<String> tempList = new ChordList<String>();
-//                        tempList.addAll(new TreeSet<String>(SimpleDhtProvider.getInstance().chordList));
-//
-//                        /*add the new port to chord list; being a tree set, the chord list automatically sorts the list as per hash(port)
-//                        portWithHashMap gets the correct hash, this is statically created so that we can use it for all sorts of tasks later*/
-//                        SimpleDhtProvider.getInstance().chordList.add(SimpleDhtProvider.getInstance().portWithHashMap.get(message.originPort));
-//
-//                        HashSet<String> nodeHashList = getNodesWithNewPredAndSucc(tempList);
-//                        for (String node: nodeHashList) {
-//                            String predPort = SimpleDhtProvider.getInstance().hashWithPortMap.get(SimpleDhtProvider.getInstance().chordList.getPredecessor(node));
-//                            String succPort = SimpleDhtProvider.getInstance().hashWithPortMap.get(SimpleDhtProvider.getInstance().chordList.getSuccessor(node));
-//                            String nodePort = SimpleDhtProvider.getInstance().hashWithPortMap.get(node);
-//                            Log.e(TAG,"node " + nodePort + " pred & succ changed !");
-//                            Log.e(TAG,"new Pred " + predPort);
-//                            Log.e(TAG, "new succ " + succPort);
-//                            if (!nodePort.equalsIgnoreCase(SimpleDhtProvider.myPort)) {
-//                                Message nodeAdded_msg = new Message("dummy","dummy","dummy",
-//                                        SimpleDhtProvider.getInstance().NODE_ADDED,
-//                                        SimpleDhtProvider.getInstance().myPort, //origin port
-//                                        nodePort,                     //remote port
-//                                        predPort, //pred
-//                                        succPort);  //succ
-//
-//                                SimpleDhtProvider.getInstance().sendMessageToRemotePort(nodeAdded_msg);
-//                            } else {
-//                                SimpleDhtProvider.getInstance().setPredAndSuccHash(predPort, succPort);
-//                            }
-//                        }
-//                    }
-//                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.getInstance().NODE_ADDED)) {
-//                        /*This is ACK from chord ring master that some new AVD has been added to ring; update predPort and succPort as per the message parameters*/
-//                        Log.e(TAG, "Node added ACK found, pred and succ are" + message.predPort + " : " + message.succPort);
-//                        SimpleDhtProvider.getInstance().setPredAndSucc(message);
-//                    }
-//                    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
-//                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.INSERT_LOOKUP)) { //route message for inserting message
-//                        Log.e(TAG, "Insert_Lookup request found from  " + message.originPort);
-//                        ContentValues cv = new ContentValues();
-//                        cv.put(SimpleDynamoActivity.KEY_FIELD,message.key);
-//                        cv.put(SimpleDynamoActivity.VALUE_FIELD, message.value);
-//
-//                        cv.put(SimpleDynamoActivity.PORT, message.originPort);
-//                        SimpleDhtProvider.getInstance().insert(SimpleDynamoActivity.contentURI, cv);
-//
-//                    }
-//                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.QUERY_LOOKUP)) {
-//                        Log.e(TAG,"Query_Lookup request found from  " + message.originPort);
-//                        String portLocation = findLocationStoringTheMessage(message);
-//                        //reply to origin port with found portLocation
-//                        Log.e(TAG,"actual port location is " + portLocation);
-//
-//                        message.remotePort= message.originPort; //reply to sender about it
-//                        message.messageType= SimpleDhtProvider.QUERY_DONE;
-//                        message.originPort = portLocation;      // this is the location of DB; receiver extracts this for further lookup
-//
-//                        SimpleDhtProvider.getInstance().sendMessageToRemotePort(message);
-//                    } else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.QUERY_DONE)) {
-//                        /*originator of QUERY_LOOKUP receives this response, release the waiting content provider for further processing*/
-//                        Log.e(TAG, "Received reply from AVD0 about portLocation " + message.originPort);
-//                        SimpleDhtProvider.portLocation = message.originPort;
-//                        synchronized (SimpleDhtProvider.lock) {
-//                            SimpleDhtProvider.queryDone = true;
-//                            SimpleDhtProvider.lock.notifyAll();
-//                        }
-//
-//                    } else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.QUERY_GET_DATA)) {
-//                        /*Used by remote ports to ask for data from the database, "key" can be either specific text, or "@" parameter*/
-//                        Log.e(TAG, "QUERY_GET_DATA, To query " + message.key);
-//                        Cursor cursor = SimpleDhtProvider.getInstance().returnLocalData(message.key);
-//                        if (cursor == null) {
-//                            throw new Exception();
-//                        }
-//
-//                        message.messageType = SimpleDhtProvider.QRY_DATA_DONE;
-//                        HashMap<String,String> list = getAllKeysAndValues(cursor);
-//
-//                        if (list.size() > 0) { //message.key will have all the key fields in colon-seperated format if parameter was GDump parameter
-//                            message.key   = list.get(SimpleDynamoActivity.KEY_FIELD);
-//                            message.value = list.get(SimpleDynamoActivity.VALUE_FIELD);
-//                        } else { //safety condition
-//                            message.key   = SimpleDhtProvider.EMPTY;
-//                            message.value = SimpleDhtProvider.EMPTY;
-//                        }
-//
-//                        Log.e(TAG,"DB key " + message.key);
-//                        Log.e(TAG,"DB val " + message.value);
-//
-//                        message.remotePort  = message.originPort;
-//                        message.originPort  = SimpleDhtProvider.myPort;
-//                        cursor.close();
-//                        SimpleDhtProvider.getInstance().sendMessageToRemotePort(message);
-//                    }
-//                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.QRY_DATA_DONE)) {
-//                        /*Originator of Query lookup request receives this response and unlocks waiting content provider for processing*/
-//                        Log.e(TAG,"Result of QRY_DATA_DONE from " + message.originPort + " is " + " key=" + message.key + " = " + message.value);
-//
-//                        SimpleDhtProvider.queryKey  = message.key;
-//                        SimpleDhtProvider.queryValue= message.value;
-//                        synchronized (SimpleDhtProvider.lock) {
-//                            SimpleDhtProvider.queryDone = true;
-//                            SimpleDhtProvider.lock.notifyAll();
-//                        }
-//                    }
-//                    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
-//                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.ALIVE_NODES)) {
-//                        Log.e(TAG,"Return all alive nodes list to " + message.originPort);
-//                        message.key = SimpleDhtProvider.getInstance().getListOfAliveNodes();
-//                        Log.e(TAG,"Alive nodes are " + message.key);
-//
-//                        message.remotePort = message.originPort;
-//                        message.originPort = SimpleDhtProvider.myPort;
-//                        message.messageType= SimpleDhtProvider.ALIVE_NODES_RESP;
-//
-//                        SimpleDhtProvider.getInstance().sendMessageToRemotePort(message);
-//
-//                    } else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.ALIVE_NODES_RESP)) {
-//                        Log.e(TAG,"List of alive nodes found from " + SimpleDhtProvider.NODE_JOINER_PORT + " is " + message.key);
-//                        SimpleDhtProvider.queryKey = message.key;
-//                        synchronized (SimpleDhtProvider.lock) {
-//                            SimpleDhtProvider.queryDone = true;
-//                            SimpleDhtProvider.lock.notifyAll();
-//                        }
-//                    }
-//                    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
-//                    else if (message.messageType.equalsIgnoreCase(SimpleDhtProvider.DELETE_DATA)) {
-//                        Log.e(TAG,"Delete request found from " + message.originPort + " selection parameter "  + message.key );
-//                        SimpleDynamoActivity.sql.deleteDataFromTable(message.key);
-//
-//                    }
-
-                } catch(SocketTimeoutException e) {
-                    e.printStackTrace();
-                } catch(StreamCorruptedException e) {
-                    e.printStackTrace();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }  catch (Exception e) {
-                    e.printStackTrace();
+                } catch(SocketTimeoutException ex) {
+                    ex.printStackTrace();
+                    Log.e(TAG, "process " + clientSocket.getPort() + " is dead !! ");
+                    SimpleDynamoProvider.handleFailures(String.valueOf(clientSocket.getPort()) , null);
+                    Log.e(TAG, "ClientTask SocketTimeoutException " + ex.getMessage());
+                } catch (UnknownHostException ex) {
+                    ex.printStackTrace();
+                    Log.e(TAG, "process " + String.valueOf(clientSocket.getPort()) + " is dead !! ");
+                    SimpleDynamoProvider.handleFailures(String.valueOf(clientSocket.getPort()), null);
+                    Log.e(TAG, "ClientTask UnknownHostException " + ex.getMessage());
+                } catch( IOException ex) {
+                    Log.e(TAG, "process " + String.valueOf(clientSocket.getPort()) + " is dead !! ");
+                    SimpleDynamoProvider.handleFailures(String.valueOf(clientSocket.getPort()), null);
+                    ex.printStackTrace();
+                    Log.e(TAG, "ClientTask socket IOException " + ex.getMessage());
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    Log.e(TAG, "process " + String.valueOf(clientSocket.getPort()) + " is dead !! ");
+                    SimpleDynamoProvider.handleFailures(String.valueOf(clientSocket.getPort()), null);
+                    Log.e(TAG, "ClientTask socket Exception " + ex.getMessage());
                 }
 
 
             }
-        } catch(Exception e) {
 
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+        try {
+            serverSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
         return null;
     }

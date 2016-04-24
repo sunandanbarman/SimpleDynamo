@@ -10,7 +10,8 @@ import android.util.Log;
  * Created by sunandan on 4/15/16.
  */
 public class Message {
-    public String key,value, hashKey, messageType;
+    public String key,value, messageType;
+    public String replicationCount;
     public String originPort, remotePort;
 //    public String predPort, succPort; //use only in case of NODE_ADDED message
 
@@ -20,12 +21,10 @@ public class Message {
     Message(Message m1) {
         this.key  = m1.key;
         this.value= m1.value;
-        this.hashKey     = m1.hashKey;
         this.messageType = m1.messageType;
         this.originPort  = m1.originPort;
         this.remotePort  = m1.remotePort;
-//        this.predPort    = m1.predPort;
-//        this.succPort    = m1.succPort;
+        this.replicationCount = m1.replicationCount;
     }
     Message(String text) {
         this.reconstructMessage(text);
@@ -40,13 +39,14 @@ public class Message {
 //        this.predPort    = predPort;
 //        this.succPort    = succPort;
 //    }
-    Message(String key, String value, String messageType, String originPort,String remotePort) {
+    Message(String key, String value, String messageType, String originPort,String remotePort, String replicationCount) {
         this.key  = key;
         this.value= value;
         //this.hashKey = hashKey;
         this.messageType = messageType;
         this.originPort  = originPort;
         this.remotePort  = remotePort;
+        this.replicationCount = replicationCount;
 //        this.predPort    = predPort;
 //        this.succPort    = succPort;
     }
@@ -56,14 +56,12 @@ public class Message {
         Log.e("reconstructMessage","incomingMessage "  + incomingMessage);
         String[] msgs = incomingMessage.split(";");
         try {
-            this.key = msgs[0];
-            this.value = msgs[1];
-            this.hashKey = msgs[2];
-            this.messageType= msgs[3];
-            this.originPort = msgs[4];
-            this.remotePort = msgs[5];
-//            this.predPort   = msgs[6];
-//            this.succPort   = msgs[7];
+            this.key        = msgs[0];
+            this.value      = msgs[1];
+            this.messageType= msgs[2];
+            this.originPort = msgs[3];
+            this.remotePort = msgs[4];
+            this.replicationCount = msgs[5];
         }
         catch(Exception ex) {
             ex.printStackTrace();
@@ -74,10 +72,10 @@ public class Message {
     public String deconstructMessage() {
         return  this.key           + ";"
                 + this.value       + ";"
-                + this.hashKey     + ";"
                 + this.messageType + ";"
                 + this.originPort  + ";"
-                + this.remotePort  + ";";
+                + this.remotePort  + ";"
+                + this.replicationCount  + ";";
     }
     /**
      *
@@ -86,10 +84,10 @@ public class Message {
     public String toString() {
         return  "key   :"       + this.key     + ";"
                 + "value:"     + this.value  + ";"
-                + "hashKey:"     + this.hashKey  + ";"
                 + "messageType:"      + this.messageType + ";"
-                + "originPort:"     + this.originPort  + ";"
-                + "remotePort:"     + this.remotePort  + ";";
+                + "originPort:"       + this.originPort  + ";"
+                + "remotePort:"       + this.remotePort  + ";"
+                + "replicationCount:" + this.replicationCount  + ";";
     }
 
 }

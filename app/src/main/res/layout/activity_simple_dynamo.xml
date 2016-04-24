@@ -82,4 +82,22 @@
         android:layout_alignTop="@+id/textView1"
         android:layout_toEndOf="@+id/btnLDump" />
 
+    <EditText
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:id="@+id/edtHash"
+        android:layout_above="@+id/textView"
+        android:layout_alignTop="@+id/textView1"
+        android:layout_alignEnd="@+id/textView1"
+        android:layout_alignStart="@+id/btnQueryText" />
+
+    <Button
+        style="?android:attr/buttonStyleSmall"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="hash"
+        android:id="@+id/btnGenHash"
+        android:layout_alignParentTop="true"
+        android:layout_toEndOf="@+id/btnGDump" />
+
 </RelativeLayout>

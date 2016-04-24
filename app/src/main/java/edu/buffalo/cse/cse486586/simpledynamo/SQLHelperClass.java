@@ -14,51 +14,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Database code referred from :
  * http://developer.android.com/training/basics/data-storage/databases.html
  */
-
-//class DatabaseManager {
-//
-//    private AtomicInteger mOpenCounter = new AtomicInteger();
-//
-//    private static DatabaseManager instance;
-//    private static SQLiteOpenHelper mDatabaseHelper;
-//    private SQLiteDatabase mDatabase;
-//
-//    public static synchronized void initializeInstance(SQLiteOpenHelper helper) {
-//        if (instance == null) {
-//            instance = new DatabaseManager();
-//            mDatabaseHelper = helper;
-//        }
-//    }
-//
-//    public static synchronized DatabaseManager getInstance() {
-//        if (instance == null) {
-//            throw new IllegalStateException(DatabaseManager.class.getSimpleName() +
-//                    " is not initialized, call initializeInstance(..) method first.");
-//        }
-//
-//        return instance;
-//    }
-//
-//    public synchronized SQLiteDatabase openDatabase() {
-//        if(mOpenCounter.incrementAndGet() == 1) {
-//            // Opening new database
-//            mDatabase = mDatabaseHelper.getWritableDatabase();
-//        }
-//        return mDatabase;
-//    }
-//
-//    public synchronized void closeDatabase() {
-//        if(mOpenCounter.decrementAndGet() == 0) {
-//            // Closing database
-//            mDatabase.close();
-//
-//        }
-//    }
-//}
-
 class SQLHelperClass extends  SQLiteOpenHelper{
     private String TAG = SQLHelperClass.class.getName();
     private static String DB_TABLE = "Data";
+    private static String FAILURE_DB_TABLE = "FailData";
     private static String DB_NAME  = "SimpleDynamo.db";
     public static int DB_VERSION = 1;
 
@@ -67,14 +26,27 @@ class SQLHelperClass extends  SQLiteOpenHelper{
     /***
      * column names
      */
-    private static String COLUMN_KEY = "key";
-    private static String COLUMN_VAL = "value";
-    private static String TEXT_TYPE  = " TEXT ";
+    private static String COLUMN_KEY       = "key";
+    private static String COLUMN_VAL       = "value";
+    private static String COLUMN_PORT      = "port";
+    private static String COLUMN_REPLICATE = "replicate";
+    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
+    private static String TEXT_TYPE        = "TEXT ";
+    private static String INTEGER_TYPE     = "INTEGER";
 
     private static final String SQL_CREATE_TABLE =
             "CREATE TABLE " + DB_TABLE + " ( " + COLUMN_KEY + " STRING PRIMARY KEY,"
-                    + COLUMN_VAL + TEXT_TYPE + " )"
+                    + COLUMN_VAL + " " + TEXT_TYPE + " )"
             ;
+
+    private static final String SQL_CREATE_FAILURE_TABLE =
+            "CREATE TABLE " + FAILURE_DB_TABLE
+                    + " ( " + COLUMN_KEY + " STRING PRIMARY KEY,"
+                    + COLUMN_VAL      + " " + TEXT_TYPE + ","
+                    + COLUMN_PORT     + " " + TEXT_TYPE + ","
+                    + COLUMN_REPLICATE+ " " + INTEGER_TYPE
+                    +  " )";
+
     /**
      * Create a helper object to create, open, and/or manage a database.
      * This method always returns very quickly.  The database is not actually
@@ -115,6 +87,7 @@ class SQLHelperClass extends  SQLiteOpenHelper{
     public void onCreate(SQLiteDatabase db) {
 
         db.execSQL(SQL_CREATE_TABLE);
+        db.execSQL(SQL_CREATE_FAILURE_TABLE);
         if (db == null) {
             Log.e("ONCREATE","HOW Can this happen ?");
         }
@@ -150,7 +123,7 @@ class SQLHelperClass extends  SQLiteOpenHelper{
         long newRowID = -1;
         try {
             if (SQLHelperClass.db == null) {
-                Log.e("INSERTVALUES", "WTF !! DID not init DB");
+                //Log.e("INSERTVALUES", "WTF !! DID not init DB");
                 SQLHelperClass.db = this.getWritableDatabase();
             }
             newRowID = SQLHelperClass.db.insertWithOnConflict(DB_TABLE, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
@@ -196,5 +169,82 @@ class SQLHelperClass extends  SQLiteOpenHelper{
         return rowsAffected;
     }
 
+
+    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
+    /**
+     * Use this method to insert the values into DB
+     * @param message
+     * @return
+     */
+    public synchronized long insertFailureValues(Message message) {
+        // Gets the data repository in write mode
+        //SQLiteDatabase db = this.getWritableDatabase();
+
+        // Insert the new row, returning the primary key value of the new row
+        // insertWithOnConflict takes care to replace the row in case value already exists
+        // ensuring key=value is always up-to date
+        long newRowID = -1;
+        if (message == null) {
+            return newRowID;
+        }
+        try {
+            if (SQLHelperClass.db == null) {
+                //Log.e("INSERTVALUES", "WTF !! DID not init DB");
+                SQLHelperClass.db = this.getWritableDatabase();
+            }
+            ContentValues cv = new ContentValues();
+            cv.put(COLUMN_KEY,message.key);
+            cv.put(COLUMN_VAL,message.value);
+            cv.put(COLUMN_PORT,message.remotePort);
+
+            if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT)) { // if INSERT message was missed, then it needs to be replicated once msg is recovered
+                cv.put(COLUMN_REPLICATE,2);
+            } else {
+                cv.put(COLUMN_REPLICATE,0);
+            }
+
+            newRowID = SQLHelperClass.db.insertWithOnConflict(FAILURE_DB_TABLE, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+        } catch(Exception ex) {
+            //Log.e("INSERTVALUES",ex.)
+            ex.printStackTrace();
+        }
+        return newRowID;
+    }
+
+    public synchronized Cursor getFailureData(String[] projection, String selection, String[] selectionArgs,
+                                       String sortOrder) {
+
+        if (SQLHelperClass.db == null) {
+            SQLHelperClass.db = this.getReadableDatabase();
+        }
+        Cursor c = null;
+        try {
+            c = SQLHelperClass.db.query(FAILURE_DB_TABLE, projection, selection, selectionArgs, null, null, sortOrder);
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return c;
+    }
+    /**
+     * Call this method when a specific row entry has to be deleted
+     * Pass null in parameter to delete entire table
+     * @param key
+     */
+    public synchronized int deleteDataFromFailureTable(String key) {
+        int rowsAffected;
+        if (SQLHelperClass.db == null) {
+            SQLHelperClass.db = this.getWritableDatabase();
+        }
+
+        if (key == null) {
+            rowsAffected = SQLHelperClass.db.delete(FAILURE_DB_TABLE,null,null);
+        } else {
+            rowsAffected = SQLHelperClass.db.delete(FAILURE_DB_TABLE,"key=?",new String[]{key});
+        }
+
+        return rowsAffected;
+    }
+
 }
+
 

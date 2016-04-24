@@ -15,9 +15,10 @@ public class SimpleDynamoActivity extends Activity {
 	static final String TAG = SimpleDynamoActivity.class.getName();
 	public static final String LDumpSelection = "@";
 	public static final String GDumpSelection = "*";
-	public static final String KEY_FIELD = "key";
+	public static final String KEY_FIELD   = "key";
 	public static final String VALUE_FIELD = "value";
-	public static final String PORT = "port";
+	public static final String PORT        = "port";
+	public static final String REPLICATE   = "replicate";
 	public static SimpleDynamoActivity singleActivity;
 
 	public static Uri contentURI;
@@ -161,6 +162,13 @@ public class SimpleDynamoActivity extends Activity {
 				if (resultCursor != null)
 					resultCursor.close();
 
+			}
+		});
+		final TextView edtHash = (TextView) findViewById(R.id.editText);
+		findViewById(R.id.btnGenHash).setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				edtHash.getText().toString();
 			}
 		});
 		/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
