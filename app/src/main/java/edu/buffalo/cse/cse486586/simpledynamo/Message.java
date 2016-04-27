@@ -53,7 +53,7 @@ public class Message {
 
     /** split the incomingMessage and fill in the details in "this" object**/
     public void reconstructMessage(String incomingMessage) {
-        Log.e("reconstructMessage","incomingMessage "  + incomingMessage);
+        //Log.e("reconstructMessage","incomingMessage "  + incomingMessage);
         String[] msgs = incomingMessage.split(";");
         try {
             this.key        = msgs[0];

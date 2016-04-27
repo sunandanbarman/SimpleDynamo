@@ -192,6 +192,9 @@ class SQLHelperClass extends  SQLiteOpenHelper{
                 //Log.e("INSERTVALUES", "WTF !! DID not init DB");
                 SQLHelperClass.db = this.getWritableDatabase();
             }
+
+            Log.e("insertFailureValues","To log " + message.toString() + " in failDB");
+
             ContentValues cv = new ContentValues();
             cv.put(COLUMN_KEY,message.key);
             cv.put(COLUMN_VAL,message.value);

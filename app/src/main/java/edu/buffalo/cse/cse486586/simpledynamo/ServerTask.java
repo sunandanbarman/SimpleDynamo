@@ -90,19 +90,24 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 //        return result;
 //    }
     private StringBuilder getReplicationCount(Cursor cursor) {
+        Log.e("getReplicationCount","Lets see what we get ...");
         if (cursor == null || cursor.getCount() == 0) {
             return null;
         }
+        Log.e("getReplicationCount","We can start ...");
         StringBuilder sb = new StringBuilder();
         int replicationIndex = cursor.getColumnIndex(SimpleDynamoActivity.REPLICATE);
+        Log.e("getReplicationCount","replicationIndex ..." + replicationIndex);
         int replicationCount = 0;
         cursor.moveToFirst();
 
         while(!cursor.isAfterLast()) {
             replicationCount = cursor.getInt(replicationIndex);
+            Log.e("getReplicationCount","replicationCount ... " + replicationCount);
             sb = sb.append(String.valueOf(replicationCount)).append(":");
             cursor.moveToNext();
         }
+        Log.e("getReplicationCount","Final result ..." + sb.toString());
         return sb;
         //return  replicationList;
     }
@@ -119,24 +124,32 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
         int keyIndex  = cursor.getColumnIndex(SimpleDynamoActivity.KEY_FIELD);
         int valueIndex= cursor.getColumnIndex(SimpleDynamoActivity.VALUE_FIELD);
 
+        //Log.e("getAllKeysAndValues","key");
         cursor.moveToFirst();
         while(!cursor.isAfterLast()) {
             String key  = cursor.getString(keyIndex);
             String value= cursor.getString(valueIndex);
+            Log.e("getAllKeysAndValues","");
+
             if (list.get(SimpleDynamoActivity.KEY_FIELD) == null) {
+                Log.e("getAllKeysAndValues","");
                 list.put(SimpleDynamoActivity.KEY_FIELD,key);
             } else {
+                Log.e("getAllKeysAndValues","");
                 list.put(SimpleDynamoActivity.KEY_FIELD,new StringBuilder(list.get(SimpleDynamoActivity.KEY_FIELD)).append(":").append(key).toString());
             }
 
             if (list.get(SimpleDynamoActivity.VALUE_FIELD) == null) {
+                Log.e("getAllKeysAndValues","");
                 list.put(SimpleDynamoActivity.VALUE_FIELD,value);
             } else {
+                Log.e("getAllKeysAndValues","");
                 list.put(SimpleDynamoActivity.VALUE_FIELD,new StringBuilder(list.get(SimpleDynamoActivity.VALUE_FIELD)).append(":").append(value).toString());
             }
 
             cursor.moveToNext();
         }
+        Log.e("getAllKeysAndValues","");
         return list;
     }
 
@@ -148,16 +161,64 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
     }
 
     private void sendReplicationMessageOnRecovery(String[] replArr,String[] keyArr,String[] valArr,Message message) {
-        for(int i=0; i < replArr.length; i++) {
+        String first_Succ = SimpleDynamoProvider.dynamoList.getSuccessor(
+                SimpleDynamoProvider.node_id);
+        String second_Succ= SimpleDynamoProvider.dynamoList.getSuccessor(first_Succ);
+        message.originPort  = SimpleDynamoProvider.myPort;
+        message.messageType = SimpleDynamoProvider.REPLICATE;
+        for(int i=0; i < keyArr.length; i++) {
+
             if (Integer.valueOf(replArr[i]) > 0 ) {
                 message.key   = keyArr[i];
                 message.value = valArr[i];
-                Log.e("sendReplMsgOnRecovery","key " + message.key + ":" + message.value + ":" + replArr[i]);
+                Log.e("sendReplMsgOnRecovery","key " + keyArr[i] + ":" + valArr[i] + ":" + replArr[i]);
+                /*Replication 1*/
+                message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(first_Succ);
+                SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
+                /*Replication 2*/
+                message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
                 SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
             } else {
-                Log.e("sendReplMsgOnRecovery","key " + message.key + " NOT replicated");
+                Log.e("sendReplMsgOnRecovery","key " + keyArr[i] + " NOT replicated");
             }
         }
+    }
+
+    private boolean addSingleRowDataToLocalDB(Cursor cursor,Message message) {
+        Log.e("addSingleDataToLocalDB", "called");
+        boolean bResult = false;
+        if ( (cursor == null) || (cursor.getCount() == 0)) {
+            return bResult;
+        }
+        cursor.moveToFirst();
+        int keyIndex  = cursor.getColumnIndex(SimpleDynamoActivity.KEY_FIELD);
+        int valueIndex= cursor.getColumnIndex(SimpleDynamoActivity.VALUE_FIELD);
+
+        if (keyIndex == -1 || valueIndex == -1) {
+            Log.e("addSingleDataToLocalDB", "Wrong columns");
+            return bResult;
+        }
+
+        if (!(cursor.isFirst() &&  cursor.isLast())) {
+            Log.e("addSingleDataToLocalDB", "Wrong number of rows");
+            return bResult;
+        }
+
+        String returnKey   = cursor.getString(keyIndex);
+        String returnValue = cursor.getString(valueIndex);
+        Log.e("addSingleDataToLocalDB", "returnKey " + returnKey + " returnValue " + returnValue);
+        if (message.value.equalsIgnoreCase(returnValue)) {
+            Log.e("addSingleDataToLocalDB"," Not inserting as data is repeated...");
+            return bResult;
+        }
+        Log.e("addSingleDataToLocalDB","Value " + message.value + " is different from " + returnValue + "... Need to insert this");
+        Message temp    = new Message(returnKey,message.value,"dummy","dummy","dummy","dummy"); /*Update the value brother*/
+        if (SimpleDynamoProvider.sql.insertValues(constructContentValue(temp)) == -1) {
+            Log.e("addSingleDataToLocalDB","addSingleRowDataToLocalDB SQL insertion failed =" + message.toString());
+            return bResult;
+        }
+        bResult = true;
+        return bResult;
     }
     /**
      * Does a lookup on the message's hashkey and determines whether the message to this node, or to forward to successor node for further lookups
@@ -189,7 +250,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                     /*Now wait for actual message*/
                     reader      = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                     msgIncoming = reader.readLine();
-                    if (!msgIncoming.equals(null) && !msgIncoming.equals("")) {
+                    if (!msgIncoming.equals(null) && !msgIncoming.equals("") && (msgIncoming.indexOf("HEARTBEAT")> -1 )) {
                         Log.e(TAG,"msgReceived " + msgIncoming);
                     }
 
@@ -198,40 +259,55 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                     clientSocket.close();
                     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
                     if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT)) {
-                        Log.e(TAG, "INSERT message found from  " + message.originPort);
+                        //Log.e(TAG, "INSERT message found from  " + message.originPort);
                         /*Check if key already exists into local db, if yes then just replicate*/
                         Cursor cursor = SimpleDynamoProvider.getInstance().returnLocalData(message.key);
                         if (cursor == null) {
                             throw new Exception();
                         }
                         if (cursor.getCount() == 0) {
-                            Log.e(TAG,"TO insert " + message.toString() + " to local DB");
-                            SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
-                        } else
-                            Log.e(TAG,"Message " + message.toString() + " already in local DB");
+                            //Log.e(TAG,"TO insert " + message.toString() + " to local DB");
+                            if (SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message)) == -1) {
+                                Log.e("ServerTask","Got failure in ServerTask  for DB insert for message :" + message.toString());
+                            } else {
+                                Log.e("ServerTask","Message " + message.toString() + " inserted in ServerTask");
+                            }
+                            /**/
+
+                        }
+                        else {
+                            /*Now it may happen that during the change of phases, same key with different values are inserted
+                            * To catch such cases, we will need to check if the value in DB  == message.value
+                            * If not, then update local DB*/
+
+                            addSingleRowDataToLocalDB(cursor,message);
+                        }
+                            //Log.e(TAG,"Message " + message.toString() + " already in local DB");
                         cursor.close();
                         /*Replicate into 2 next successors here*/
                         String first_Succ = SimpleDynamoProvider.dynamoList.getSuccessor(
                                             SimpleDynamoProvider.node_id);
-                        Log.e(TAG,"first_Succ " + first_Succ);
+                        //Log.e(TAG,"first_Succ " + first_Succ);
                         String second_Succ= SimpleDynamoProvider.dynamoList.getSuccessor(first_Succ);
-                        Log.e(TAG,"second_Succ " + second_Succ);
+                        //Log.e(TAG,"second_Succ " + second_Succ);
                         /*Replication 1*/
 
                         message.originPort  = SimpleDynamoProvider.myPort;
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(first_Succ);
-                        Log.e(TAG,"First succ port " + message.remotePort);
+                        //Log.e(TAG,"First succ port " + message.remotePort);
                         message.messageType = SimpleDynamoProvider.REPLICATE;
 
                          SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
                         /*Replication 2*/
                         message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
-                        Log.e(TAG,"Second succ port " + message.remotePort);
+                        ///Log.e(TAG,"Second succ port " + message.remotePort);
                         SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
 
                     } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.REPLICATE)) {
                         Log.e(TAG,"REPLICATE message " + message.toString() + " received ");
-                        SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message));
+                        if (SimpleDynamoProvider.getInstance().insertIntoDatabase(constructContentValue(message)) == -1) {
+                            Log.e("ServerTask","Failed in DB insert for REPLICATE");
+                        }
 
                     } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.QUERY_GET_DATA)) {
                         /*Used by remote ports to ask for data from the database, "key" can be either specific text, or "@" parameter*/
@@ -302,7 +378,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                             message.originPort  = SimpleDynamoProvider.myPort;
 
                             cursor.close();
-                            Log.e(TAG,"To inform " + message.remotePort + " for recovery message");
+                            //Log.e(TAG,"To inform " + message.remotePort + " for recovery message");
                             SimpleDynamoProvider.sendMessageToRemotePort(message);
                             Log.e(TAG,"Remove from failureTable for "  + message.remotePort);
                             SimpleDynamoProvider.deleteFromFailureTable(message.key);
@@ -313,6 +389,11 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                         Log.e(TAG,"RECOVER_RESP found from " + message.originPort);
                         if (!message.key.equalsIgnoreCase(SimpleDynamoProvider.EMPTY) &&
                             !message.value.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)    ) {
+
+                            Log.e(TAG,"message.key "+ message.key);
+                            Log.e(TAG,"message.value " + message.value);
+                            Log.e(TAG,"message.replicationCount " + message.replicationCount);
+
                             String[] keyArr = message.key.split(":");
                             String[] valArr = message.value.split(":");
                             String[] replArr= message.replicationCount.split(":");
@@ -327,39 +408,26 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                                 contentValues.put(SimpleDynamoActivity.KEY_FIELD,keyArr[i]);
                                 contentValues.put(SimpleDynamoActivity.VALUE_FIELD,valArr[i]);
 
-                                SimpleDynamoProvider.getInstance().insertIntoDatabase(contentValues);
+                                if (SimpleDynamoProvider.getInstance().insertIntoDatabase(contentValues) == -1) {
+                                    Log.e("ServerTask","Failed in DB insert for RECOVER_RESP");
+                                }
                                 //String[] results  = new String[]{keyArr[i],valArr[i]};
                                 //matrixCursor.addRow(results);
                             }
                             /*Now send out replication messages*/
-                            Log.e(TAG,"Now send recovery messages...");
-                            String first_Succ = SimpleDynamoProvider.dynamoList.getSuccessor(
-                                    SimpleDynamoProvider.node_id);
-                            Log.e(TAG,"first_Succ " + first_Succ);
-                            String second_Succ= SimpleDynamoProvider.dynamoList.getSuccessor(first_Succ);
-                            Log.e(TAG,"second_Succ " + second_Succ);
-                            /*Replication 1*/
-
-                            message.originPort  = SimpleDynamoProvider.myPort;
-                            message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(first_Succ);
-                            Log.e(TAG,"First succ port " + message.remotePort);
-                            message.messageType = SimpleDynamoProvider.REPLICATE;
+                            Log.e(TAG,"Now send recovery messages (if required)...");
                             sendReplicationMessageOnRecovery(replArr,keyArr,valArr,message);
-//                            for(int i=0; i < replArr.length; i++) {
-//                                message.key   = keyArr[i];
-//                                message.value = valArr[i];
-//                                SimpleDynamoProvider.sendMessageToRemotePort(new Message(message));
-//                            }
-
-                            /*Replication 2*/
-                            message.remotePort  = SimpleDynamoProvider.dynamoList.getPortFromPortHash(second_Succ);
-                            Log.e(TAG,"Second succ port " + message.remotePort);
-                            sendReplicationMessageOnRecovery(replArr,keyArr,valArr,message);
-
                         } else {
-                            Log.e(TAG,"No keys found from " + message.remotePort);
+                            Log.e(TAG,"No keys found from " + message.originPort);
                         }
                     }
+                    /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
+                    else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.DELETE_DATA)) {
+                        Log.e(TAG,"Delete request found from " + message.originPort + " selection parameter "  + message.key );
+                        SimpleDynamoProvider.sql.deleteDataFromTable(message.key);
+
+                    }
+
 
                 } catch(SocketTimeoutException ex) {
                     ex.printStackTrace();

@@ -29,7 +29,17 @@ import android.util.Log;
  * For phase2 and phase 3: Ensuring that the DB is a singleton class, and only one copy of DB is opened for read & write
  * plus ensuring thread-safety of DB operations is enough to ensure that these 2 phases pass.
  *
- *
+ * For phase 4, following things need to be done :
+ * 1. Detecting that the failure has occured on some node. This we do by sending ACK ask-ACK reply message sequence before every pair of actual message sent.
+ *    Once a node has been detected has failed, store it in failedAVDList
+ * 2. Ensure that the messages that were to be stored in that failedAVD are "not lost". For this purpose, I use a second DB table on sender side to buffer all
+ *    such messages.
+ *    Note: Such messages can be either INSERT or REPLICATE. For INSERT the database will have replicationCount = 2, for REPLICATE replicationCount = 0
+ * 3. When the AVD recovers, it contacts all the remaining nodes in the ring to get the lost messages. Any message with replicationCount == 2 is replicated twice to
+ *    its next two successors
+ * 4. For query purposes, the originator will ask the "true location" plus the replicated locations as well for the answer, Whichever answers us first, will be our
+ *    result.
+ *    TODO : I still don't know if I should do "versioning" of messages as mentioned in specification, Will see later
  */
 public class SimpleDynamoProvider extends ContentProvider {
 	public static String TAG  = SimpleDynamoProvider.class.getName();
@@ -42,7 +52,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     public static String node_id = "";
     public static String myPort = "";
 
-    public static final int TIMEOUT          = 1000;
+    public static final int TIMEOUT          = 1500;
     public static final int MAX_MSG_LENGTH   = 40000; //HUGE: as the whole DB data is dumped  as a string
     public static final int SERVER_PORT      = 10000;
 
@@ -92,14 +102,14 @@ public class SimpleDynamoProvider extends ContentProvider {
      * @return
      */
     public boolean doLookup(String hashKey,String node_id) {
-        Log.e(TAG,"doLookup, hashKey " + hashKey + " node_id " + node_id);
+        //Log.e(TAG,"doLookup, hashKey " + hashKey + " node_id " + node_id);
         String predHash = dynamoList.getPredecessor(node_id);
-        Log.e(TAG,"doLookup, predHash " + predHash);
+        //Log.e(TAG,"doLookup, predHash " + predHash);
         if ( hashKey.compareTo(predHash) >0 &&  hashKey.compareTo(node_id) <= 0 ) {
-            Log.e(TAG,"doLookup, return true");
+            //Log.e(TAG,"doLookup, return true");
             return true;
         }
-        Log.e(TAG,"doLookup, return false");
+        //Log.e(TAG,"doLookup, return false");
         return  false;
     }
     public synchronized String getLocationOfMessage(String key) {
@@ -108,10 +118,10 @@ public class SimpleDynamoProvider extends ContentProvider {
         Log.e(TAG,"hash => " + hash + " for key " + key);
         String location = "";
         if(hash.equals("")) {
-            Log.e(TAG,"Empty hash, thus empty location");
+            //Log.e(TAG,"Empty hash, thus empty location");
             return location;
         }
-        Log.e(TAG," dynamoList.last() " + dynamoList.last());
+        //Log.e(TAG," dynamoList.last() " + dynamoList.last());
         for(String node:dynamoList) {
             //Log.e(TAG,"To doLookup for node " + node);
             if (doLookup(hash,node)) {
@@ -123,7 +133,7 @@ public class SimpleDynamoProvider extends ContentProvider {
         }
         if (location.equalsIgnoreCase("")) {
             location = dynamoList.getPortFromPortHash(dynamoList.first());
-            Log.e(TAG,"hash(key) greater / smaller than all nodes, location is first node  " + location);
+            //Log.e(TAG,"hash(key) greater / smaller than all nodes, location is first node  " + location);
         }
         Log.e(TAG,"*********Final location " + location);
         return location;
@@ -135,8 +145,14 @@ public class SimpleDynamoProvider extends ContentProvider {
         /**/
         Log.e(TAG,"To remove " + remotePort + " from aliveNode list");
         //SimpleDynamoProvider.dynamoList.removePort(remotePort);
+        queryDone = true;
+        SimpleDynamoProvider.queryKey = SimpleDynamoProvider.EMPTY;
         failedAVDList.add(remotePort);
-        sql.insertFailureValues(message);
+        if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT) || message.messageType.equalsIgnoreCase(SimpleDynamoProvider.REPLICATE)) {
+            Log.e("handleFailures","Log to failDB for " + message.messageType + " for remote port " + message.remotePort);
+            sql.insertFailureValues(message);
+        }
+
 //        if (failedMessageStorage.containsKey(remotePort)) {
 //            failedMessageStorage.put(remotePort,new StringBuilder(message.key).append(":").append(message.value).toString());
 //        } else {
@@ -146,6 +162,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     /**
+     * TODO: Uncomment last line
      * Contains all the colon-seperated key which we have to delete
      * The key is in ":" seperated format
      * @param key
@@ -155,7 +172,7 @@ public class SimpleDynamoProvider extends ContentProvider {
         String[] keyArr = key.split(":");
         for(int i=0; i < keyArr.length; i++) {
             Log.e(TAG,"deleteFromFailureTable KEY " + keyArr[i]);
-            //sql.deleteDataFromFailureTable(keyArr[i]);
+            sql.deleteDataFromFailureTable(keyArr[i]);
         }
     }
 
@@ -173,13 +190,24 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     }
     public long insertIntoDatabase(ContentValues cv) {
+//        if (cv.get(SimpleDynamoActivity.KEY_FIELD).equals("*")) {
+//            Log.e(TAG,"How did * come here ?");
+//            return -1;
+//        }
+//        if (cv.get(SimpleDynamoActivity.VALUE_FIELD).equals("dummy")) {
+//            Log.e(TAG,"How did dummy come here ?");
+//            return -1;
+//        }
+        Log.e("insertIntoDatabase","To insert values " + cv.toString());
         if (sql.insertValues(cv) == -1) {
-            Log.e(TAG, "Insertion into db failed for values :" + cv.toString());
+            //Log.e(TAG, "Insertion into db failed for values :" + cv.toString());
             return -1;
         }
         Log.e(TAG,"Database insertion success for values " + cv.toString());
 //        synchronized (this ) {
+        if (SimpleDynamoActivity.getInstance() != null) {
             SimpleDynamoActivity.getInstance().setText(cv.toString());
+        }
 //        }
         return 0;
     }
@@ -196,7 +224,7 @@ public class SimpleDynamoProvider extends ContentProvider {
                 return;
             }
         }
-        Log.e(TAG,"To send messsage to " + message.remotePort + " messageType " + message.messageType);
+        //Log.e(TAG,"To send messsage to " + message.remotePort + " messageType " + message.messageType);
         new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, message);
     }
     /**
@@ -205,7 +233,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     private void waitForResponse() {
         while(!queryDone) {
             synchronized (lock) {
-                //Log.e("waitForResponse","waiting for response ");
+                Log.e("waitForResponse","waiting for response ");
                 try {
                     lock.wait(1000);
                 } catch (InterruptedException e) {
@@ -214,9 +242,7 @@ public class SimpleDynamoProvider extends ContentProvider {
                 }
             }
         }
-//        synchronized (lock) {
-            queryDone = false;
-//        }
+        queryDone = false;
     }
 
     /**
@@ -265,8 +291,9 @@ public class SimpleDynamoProvider extends ContentProvider {
             key = selection;
         rowsAffected    = sql.deleteDataFromTable(key);
         Message message = new Message(selection,"dummy",DELETE_DATA,myPort,"dummy","-1");
+        String location = "" , firstSucc = "", secondSucc = "";
         for(String node: dynamoList) {
-
+            //location = getLocationOfMessage(selection);
             String remotePort = dynamoList.getPortFromPortHash(node);
             if (!remotePort.equalsIgnoreCase(myPort)) {
                 message.remotePort = remotePort;
@@ -288,12 +315,20 @@ public class SimpleDynamoProvider extends ContentProvider {
         String value= values.get(SimpleDynamoActivity.VALUE_FIELD).toString();
         Log.e(TAG,"INSERT--->" +  "key " + key + " : " + value);
         String location = getLocationOfMessage(key);
-        Log.e(TAG,"Found location " + location);
+        //Log.e(TAG,"Found location " + location);
         if (location.equalsIgnoreCase(myPort)) {
-            Log.e(TAG,"Insert into my db");
-            insertIntoDatabase(values);
+            //Log.e(TAG,"Insert into my db");
+            if (insertIntoDatabase(values) == -1) {
+
+                Log.e(TAG,"Insert failed in func insert");
+            }
+            /*Log it to "failData" table*/
+            Message message = new Message(values.getAsString(SimpleDynamoActivity.KEY_FIELD),
+                                        values.getAsString(SimpleDynamoActivity.VALUE_FIELD),
+                                        INSERT,myPort,"dummy","2");
         }
-        Log.e(TAG,"To send message "  + key + ":" + value + " to location " + location);
+
+        //Log.e(TAG,"To send message "  + key + ":" + value + " to location " + location);
         Message message = new Message(key, value,INSERT,myPort,location,"-1");
         sendMessageToRemotePort(message);
         //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,message);
@@ -305,6 +340,64 @@ public class SimpleDynamoProvider extends ContentProvider {
             Log.e(TAG,node);
         }
         Log.e(TAG,"printTreeSet ends");
+    }
+
+    /**
+     *
+     * @param matrixCursor
+     * @param message
+     * @param portHash
+     * @return
+     */
+    private boolean askForResponse(MatrixCursor matrixCursor,Message message,String portHash) {
+        //Log.e(TAG,"askForResponse portHash " + portHash);
+        message.remotePort = dynamoList.getPortFromPortHash(portHash);
+        //Log.e(TAG,"askForResponse for " + message.key + " from " + message.remotePort);
+        if (failedAVDList.contains(message.remotePort)) {
+            Log.e(TAG,"Not waiting for query response for " + message.remotePort + "..AVD has failed !");
+            return false;
+        }
+        Log.e("askForResponse","To ask " + message.remotePort + " for key " + message.key);
+        queryDone = false;
+        new ClientTask().execute(message);
+        waitForResponse();
+        Log.e(TAG,"wait over for " + message.remotePort + " for key " + message.key + ".. Result " + SimpleDynamoProvider.queryKey  + "=" + SimpleDynamoProvider.queryValue);
+        if (!SimpleDynamoProvider.queryKey.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)) {
+            Log.e(TAG,"Response found from " + message.remotePort);
+            String[] keyArr = SimpleDynamoProvider.queryKey.split(":");
+            String[] valArr = SimpleDynamoProvider.queryValue.split(":");
+
+            for(int i=0; i < keyArr.length; i++) {
+                String[] results  = new String[]{keyArr[i],valArr[i]};
+                Log.e("askForResponse",keyArr[i] + "=" + valArr[i]);
+                matrixCursor.addRow(results);
+            }
+            return true;
+        } else {
+            Log.e(TAG,"No data in " + message.remotePort);
+        }
+        return false;
+    }
+    private void addLocalDataToMatrixCursor(MatrixCursor matrixCursor) {
+        Cursor c= returnLocalData(null);
+        if (c == null) {
+            return;
+        }
+        if (c.getCount() > 0)
+        {
+            int keyIndex  = c.getColumnIndex(SimpleDynamoActivity.KEY_FIELD);
+            int valueIndex= c.getColumnIndex(SimpleDynamoActivity.VALUE_FIELD);
+            c.moveToFirst();
+
+            while(!c.isAfterLast()) {
+                String key  = c.getString(keyIndex);
+                String value= c.getString(valueIndex);
+                String[] results = new String[]{key,value};
+                matrixCursor.addRow(results);
+                c.moveToNext();
+            }
+        }
+        c.close();
     }
     @Override
     public Cursor query(Uri uri, String[] projection, String selection,
@@ -319,23 +412,45 @@ public class SimpleDynamoProvider extends ContentProvider {
             Log.e(TAG,"GDump selection parameter , ask for all the data");
             MatrixCursor matrixCursor = new MatrixCursor(new String[]{SimpleDynamoActivity.KEY_FIELD,SimpleDynamoActivity.VALUE_FIELD});
             Message message = new Message(selection,"dummy",QUERY_GET_DATA,myPort,"dummy","-1");
-            for(String node:dynamoList) {
-                String remotePort = dynamoList.getPortFromPortHash(node);
-                message.remotePort = remotePort;
-                Log.e(TAG,"GDump parameter for node " + remotePort);
-                new ClientTask().execute(message);
-                waitForResponse();
-                if (!SimpleDynamoProvider.queryKey.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)) {
-                    String[] keyArr = SimpleDynamoProvider.queryKey.split(":");
-                    String[] valArr = SimpleDynamoProvider.queryValue.split(":");
 
-                    for(int i=0; i < keyArr.length; i++) {
-                        String[] results  = new String[]{keyArr[i],valArr[i]};
-                        matrixCursor.addRow(results);
-                    }
-                } else {
-                    Log.e(TAG,"No data in " + message.remotePort);
+            /*Get local data first- we can avoid needless messages for getting local data*/
+            addLocalDataToMatrixCursor(matrixCursor);
+            for(String node:dynamoList) {
+                if (node.equalsIgnoreCase(node_id)) {
+                    Log.e(TAG,"Skip local node.. its already done ");
+                    continue;
                 }
+                if (askForResponse(matrixCursor,message,node)) {
+                    continue;
+                }
+                String firstSucc  = dynamoList.getSuccessor(node);
+                if (askForResponse(matrixCursor,message,firstSucc))
+                   continue;
+
+                String secondSucc = dynamoList.getSuccessor(firstSucc);
+                askForResponse(matrixCursor,message,secondSucc);
+                //String remotePort = dynamoList.getPortFromPortHash(node);
+
+                //message.remotePort = remotePort;
+//                Log.e(TAG,"GDump parameter for node " + remotePort);
+//                new ClientTask().execute(message);
+//                waitForResponse();
+//                if (failedAVDList.contains(remotePort)) {
+//                    Log.e(TAG,"Not waiting for query response for " + remotePort + "..AVD has failed !");
+//                    //continue;
+//                    Log.e(TAG,"Ask ");
+//                }
+//                if (!SimpleDynamoProvider.queryKey.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)) {
+//                    String[] keyArr = SimpleDynamoProvider.queryKey.split(":");
+//                    String[] valArr = SimpleDynamoProvider.queryValue.split(":");
+//
+//                    for(int i=0; i < keyArr.length; i++) {
+//                        String[] results  = new String[]{keyArr[i],valArr[i]};
+//                        matrixCursor.addRow(results);
+//                    }
+//                } else {
+//                    Log.e(TAG,"No data in " + message.remotePort);
+//                }
 
             }
             return matrixCursor;
@@ -347,16 +462,32 @@ public class SimpleDynamoProvider extends ContentProvider {
                 Log.e(TAG,"Not found in local DB ! To find actual location for message "  + selection);
                 String location = getLocationOfMessage(selection);
                 Log.e(TAG,"Actual location is " + location);
-                Message message = new Message(selection,"dummy",QUERY_GET_DATA,myPort,location,"-1");
-                new ClientTask().execute(message);
-                waitForResponse();
-                synchronized (lock) {
-                    SimpleDynamoActivity.getInstance().setText("\n*** QUERY RESULTS **** =" + SimpleDynamoProvider.queryKey + " :: " +
-                            SimpleDynamoProvider.queryValue + "\n");
-                }
-                String[] results = new String[]{SimpleDynamoProvider.queryKey, SimpleDynamoProvider.queryValue};
+                Message message  = new Message(selection,"dummy",QUERY_GET_DATA,myPort,location,"-1");
                 MatrixCursor matrixCursor = new MatrixCursor(new String[]{SimpleDynamoActivity.KEY_FIELD,SimpleDynamoActivity.VALUE_FIELD});
-                matrixCursor.addRow(results);
+
+                String portHash  = genHash(String.valueOf(Integer.valueOf(location) /2));
+                String firstSucc = dynamoList.getSuccessor(portHash);
+                String secondSucc= dynamoList.getSuccessor(firstSucc);
+
+                String[] avdList = {portHash,firstSucc,secondSucc};
+                for(String node:avdList) {
+                    Log.e(TAG,"Lets ask " + node + " now..");
+                    if (askForResponse(matrixCursor,message,node)) {
+                        Log.e(TAG,"Found response from " + dynamoList.getPortFromPortHash(node) + " for key " + message.key);
+                        break;
+                    } else
+                        Log.e(TAG,"Did not get result from " + node + "..Next iteration starts !");
+                }
+                Log.e("QueryResponse","Final response " + SimpleDynamoProvider.queryKey  + "=" + SimpleDynamoProvider.queryValue);
+//                String[] results = new String[]{SimpleDynamoProvider.queryKey, SimpleDynamoProvider.queryValue};
+//                matrixCursor.addRow(results);
+//                new ClientTask().execute(message);
+//                waitForResponse();
+//                synchronized (lock)
+//                {
+//                    SimpleDynamoActivity.getInstance().setText("\n*** QUERY RESULTS **** =" + SimpleDynamoProvider.queryKey + " :: " +
+//                            SimpleDynamoProvider.queryValue + "\n");
+//                }
                 return matrixCursor;
 
             } else {
@@ -366,9 +497,9 @@ public class SimpleDynamoProvider extends ContentProvider {
         return c;
     }
     public void checkIfNodeIsRecovered() {
-        Log.e(TAG,"checkIfNodeIsRecovered");
+        //Log.e(TAG,"checkIfNodeIsRecovered");
         SharedPreferences sharedPreferences = this.getContext().getSharedPreferences("startupPref",Context.MODE_PRIVATE);
-        Log.e(TAG,"pref check " + sharedPreferences.getBoolean("initialStartup",true));
+        //Log.e(TAG,"pref check " + sharedPreferences.getBoolean("initialStartup",true));
         if (sharedPreferences.getBoolean("initialStartup",true)) {
             sharedPreferences.edit().putBoolean("initialStartup",false).commit();
         } else
@@ -398,10 +529,13 @@ public class SimpleDynamoProvider extends ContentProvider {
         checkIfNodeIsRecovered();
         for(int i=0; i < AVD_LIST.length; i++) {
             hash = genHash(String.valueOf(AVD_LIST[i]));
-            Log.e(TAG,"port " + String.valueOf(AVD_LIST[i]) + " hash " + hash);
+            //Log.e(TAG,"port " + String.valueOf(AVD_LIST[i]) + " hash " + hash);
             dynamoList.add(genHash(String.valueOf(AVD_LIST[i])));
             Message message = new Message("dummy","dummy",RECOVER,myPort,String.valueOf(REMOTE_PORT[i]),"-1");
             if (bRecover) {
+                if (REMOTE_PORT[i] == Integer.valueOf(myPort)) { //dont ask yourself, thats stupid
+                    continue;
+                }
                 Log.e(TAG,"Sending recovery message to " + REMOTE_PORT[i]);
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,message);
             }
@@ -414,7 +548,7 @@ public class SimpleDynamoProvider extends ContentProvider {
          */
 
 
-        printTreeSet(dynamoList);
+        //printTreeSet(dynamoList);
         /*To check if the node has recovered, it must send "RECOVER" message type to all the dynamo nodes (be safe always)
         * NOTE : Sending to all nodes is required as failed INSERT messages are buffered in the sender side, and the sender could be anyone in the right
         * Of course, REPLICATE messages will be only among the previous 2 predecessors, but who cares

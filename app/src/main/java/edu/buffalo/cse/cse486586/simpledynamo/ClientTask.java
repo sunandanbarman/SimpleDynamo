@@ -25,8 +25,14 @@ public class ClientTask extends AsyncTask<Message,Void,Void> {
     public Void doInBackground(Message...messages) {
         String TAG = SimpleDynamoProvider.TAG;
         Message message = messages[0];
+
         if (message.messageType == null || message.messageType.equalsIgnoreCase("")) {
             Log.e(SimpleDynamoProvider.TAG, "messageType is either blank or NULL");
+            return null;
+        }
+
+        if (SimpleDynamoProvider.failedAVDList.contains(message.remotePort)) {
+            Log.e(TAG,"NOT sending message to " + message.remotePort + " as port is dead !");
             return null;
         }
         Socket socket;
@@ -44,17 +50,19 @@ public class ClientTask extends AsyncTask<Message,Void,Void> {
 
             reader      = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             msgIncoming = reader.readLine();
-            if (!msgIncoming.equals(null) && !msgIncoming.equals("")) {
-                Log.e(TAG,"CLIENT TASK msgReceived " + msgIncoming);
+            if ((msgIncoming.equals(null)) && !msgIncoming.equals("")) {
+                //Log.e(TAG,"CLIENT TASK msgReceived " + msgIncoming);
             }
-            Message temp = new Message();
-            temp.reconstructMessage(msgIncoming);
-            Log.e(TAG,"ACK found " + temp.toString());
+            else {
+                Message temp = new Message();
+                temp.reconstructMessage(msgIncoming);
+                //Log.e(TAG,"ACK found " + temp.toString());
 
-            outputStream = socket.getOutputStream();
-            printWriter  = new PrintWriter(outputStream);
-            printWriter.println(message.deconstructMessage());
-            printWriter.flush();
+                outputStream = socket.getOutputStream();
+                printWriter  = new PrintWriter(outputStream);
+                printWriter.println(message.deconstructMessage());
+                printWriter.flush();
+            }
 
             socket.close();
         } catch(SocketTimeoutException ex) {
