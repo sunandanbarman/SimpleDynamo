@@ -220,6 +220,20 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
         bResult = true;
         return bResult;
     }
+
+
+    private void sendACK(Socket clientSocket) throws Exception{
+        PrintWriter printWriter;
+        OutputStream outputStream;
+        /*Send ACK message*/
+        Message tempACK= new Message ("dummy","dummy",SimpleDynamoProvider.HEARTBEAT,SimpleDynamoProvider.myPort,
+                String.valueOf(clientSocket.getPort()),"-1"); // in step 1, no sequence number is required to be sent
+        outputStream = clientSocket.getOutputStream();
+        printWriter  = new PrintWriter(outputStream);
+        printWriter.println(tempACK.deconstructMessage());
+        printWriter.flush();
+
+    }
     /**
      * Does a lookup on the message's hashkey and determines whether the message to this node, or to forward to successor node for further lookups
      * @return
@@ -241,12 +255,13 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                 clientSocket.setSoTimeout(SimpleDynamoProvider.TIMEOUT);
                 try {
                     /*Send ACK message*/
-                    Message tempACK= new Message ("dummy","dummy",SimpleDynamoProvider.HEARTBEAT,SimpleDynamoProvider.myPort,
+                    /*Message tempACK= new Message ("dummy","dummy",SimpleDynamoProvider.HEARTBEAT,SimpleDynamoProvider.myPort,
                                                 String.valueOf(clientSocket.getPort()),"-1"); // in step 1, no sequence number is required to be sent
                     outputStream = clientSocket.getOutputStream();
                     printWriter  = new PrintWriter(outputStream);
                     printWriter.println(tempACK.deconstructMessage());
-                    printWriter.flush();
+                    printWriter.flush();*/
+                    sendACK(clientSocket);
                     /*Now wait for actual message*/
                     reader      = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                     msgIncoming = reader.readLine();
@@ -256,7 +271,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 
                     Message message = new Message(new String(msgIncoming));
 
-                    clientSocket.close();
+                    //clientSocket.close();
                     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
                     if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.INSERT)) {
                         //Log.e(TAG, "INSERT message found from  " + message.originPort);
@@ -386,6 +401,7 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                             Log.e(TAG,"");
 
                     } else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.RECOVER_RESP)) {
+                        SimpleDynamoProvider.recoveryCount++;
                         Log.e(TAG,"RECOVER_RESP found from " + message.originPort);
                         if (!message.key.equalsIgnoreCase(SimpleDynamoProvider.EMPTY) &&
                             !message.value.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)    ) {
@@ -420,6 +436,20 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                         } else {
                             Log.e(TAG,"No keys found from " + message.originPort);
                         }
+                        Log.e(TAG,"failedAVDLiist " + SimpleDynamoProvider.failedAVDList.size());
+                        for(String s: SimpleDynamoProvider.failedAVDList) {
+                            Log.e(TAG,"failed AVD " + s);
+                        }
+                        if (SimpleDynamoProvider.recoveryCount == (SimpleDynamoProvider.REMOTE_PORT.length - SimpleDynamoProvider.failedAVDList.size() - 1)) {
+                            //we avoid sending message to the same port, hence the "-1"
+                            Log.e(TAG,"Recovery completed");
+                            SimpleDynamoProvider.isRecoveryDone = true;
+                            synchronized (SimpleDynamoProvider.recoveryLock) {
+                                SimpleDynamoProvider.recoveryLock.notifyAll();
+                            }
+                        } else {
+                            Log.e(TAG,"Recovery remains... response found from  " + SimpleDynamoProvider.recoveryCount);
+                        }
                     }
                     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
                     else if (message.messageType.equalsIgnoreCase(SimpleDynamoProvider.DELETE_DATA)) {
@@ -427,7 +457,8 @@ public class ServerTask extends AsyncTask<ServerSocket, String, Void> {
                         SimpleDynamoProvider.sql.deleteDataFromTable(message.key);
 
                     }
-
+                    sendACK(clientSocket);
+                    clientSocket.close();
 
                 } catch(SocketTimeoutException ex) {
                     ex.printStackTrace();

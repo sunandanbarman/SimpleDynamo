@@ -64,6 +64,13 @@ public class ClientTask extends AsyncTask<Message,Void,Void> {
                 printWriter.flush();
             }
 
+            /*Wait for final response here*/
+            reader      = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            msgIncoming = reader.readLine();
+            if ((msgIncoming.equals(null)) && !msgIncoming.equals("")) {//somehow required to catch process is dead scenario
+                //Log.e(TAG,"CLIENT TASK msgReceived " + msgIncoming);
+            }
+
             socket.close();
         } catch(SocketTimeoutException ex) {
             ex.printStackTrace();

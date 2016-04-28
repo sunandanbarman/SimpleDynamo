@@ -40,6 +40,15 @@ import android.util.Log;
  * 4. For query purposes, the originator will ask the "true location" plus the replicated locations as well for the answer, Whichever answers us first, will be our
  *    result.
  *    TODO : I still don't know if I should do "versioning" of messages as mentioned in specification, Will see later
+ *
+ * Phase 5 :
+ * 1. Hold back query results until we get results from all 3 nodes.
+ * 2. Hold back INSERT/QUERY operations until we get RECOVER_RESP from all nodes
+ * 3. Ensure that the ServerTask sends back an ACK AFTER the operations are done. This is required to handle the case when the avd crashes before inserting its own local
+ *    DB, and the replication message was sent. Thus, the original AVD does not have the data, but replication gets done. To handle this, we must detect such failures,
+ *    and use "failData" table to ensure such lost messages are logged too.
+ * Phase 6 :
+ * 1. Here we need to use timestamps to return only the latest value is returned to the grader during read operation.
  */
 public class SimpleDynamoProvider extends ContentProvider {
 	public static String TAG  = SimpleDynamoProvider.class.getName();
@@ -58,8 +67,10 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     public static SimpleDynamoProvider singleInstance;
     public static SQLHelperClass sql;
-    public final static Object lock =  new Object();
-    public final static Object failureLock = new Object();
+    public final static Object lock         =  new Object();
+    public final static Object queryLock    = new Object();
+    public final static Object recoveryLock = new Object();
+
 
     /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
     public static String INSERT        = "INSERT"; //insert the data + asks for replication
@@ -78,8 +89,10 @@ public class SimpleDynamoProvider extends ContentProvider {
     public static boolean queryDone = false;
     public static String queryKey, queryValue; // stores the result sent by remote avd after querying its database
     /*Helpers for recovery operations*/
+    public static int recoveryCount       = 0;
+    public static boolean isRecoveryDone = false;
     public static HashSet<String> failedAVDList;
-    public static boolean bRecover  = false;
+    public static boolean bRecover        = false;
     public static HashMap<String,String> failedMessageStorage;
     /*stores the message of type INSERT , REPLICATE which clientTask was unable to send due to avd failure
     the sender will buffer them locally in this map and send across the details when the AVD recovers*/
@@ -311,6 +324,17 @@ public class SimpleDynamoProvider extends ContentProvider {
 
 	@Override
 	public Uri insert(Uri uri, ContentValues values) {
+        while(!isRecoveryDone) {
+            synchronized (recoveryLock) {
+                Log.e(TAG,"INSERT...Lets wait until recovery is completed...");
+                try {
+                    recoveryLock.wait(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        Log.e(TAG,"Lets start with insert");
         String key  = values.get(SimpleDynamoActivity.KEY_FIELD).toString();
         String value= values.get(SimpleDynamoActivity.VALUE_FIELD).toString();
         Log.e(TAG,"INSERT--->" +  "key " + key + " : " + value);
@@ -402,6 +426,17 @@ public class SimpleDynamoProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
+        while(!isRecoveryDone) {
+            synchronized (recoveryLock) {
+                Log.e(TAG,"QUERY...Lets wait until recovery is completed...");
+                try {
+                    recoveryLock.wait(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        Log.e(TAG,"Lets start with query");
         Cursor c = null;
         Log.e(TAG,"query is "  + selection);
         if (selection.equalsIgnoreCase(SimpleDynamoActivity.LDumpSelection)) { //Local dump
@@ -470,14 +505,29 @@ public class SimpleDynamoProvider extends ContentProvider {
                 String secondSucc= dynamoList.getSuccessor(firstSucc);
 
                 String[] avdList = {portHash,firstSucc,secondSucc};
-                for(String node:avdList) {
-                    Log.e(TAG,"Lets ask " + node + " now..");
-                    if (askForResponse(matrixCursor,message,node)) {
-                        Log.e(TAG,"Found response from " + dynamoList.getPortFromPortHash(node) + " for key " + message.key);
-                        break;
-                    } else
-                        Log.e(TAG,"Did not get result from " + node + "..Next iteration starts !");
+
+                boolean bResult = false;
+                while (!bResult ) {
+                    synchronized (queryLock) {
+                        for(String node:avdList) {
+                            Log.e(TAG,"Lets ask " + node + " now..");
+                            if (askForResponse(matrixCursor,message,node)) {
+                                Log.e(TAG,"Found response from " + dynamoList.getPortFromPortHash(node) + " for key " + message.key);
+                                bResult = true;
+                                break;
+                            } else
+                                Log.e(TAG,"Did not get result from " + node + "..Next iteration starts !");
+                        }
+                        if (bResult)
+                            break;
+                        try {
+                            queryLock.wait(100);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
                 }
+                bResult = false;
                 Log.e("QueryResponse","Final response " + SimpleDynamoProvider.queryKey  + "=" + SimpleDynamoProvider.queryValue);
 //                String[] results = new String[]{SimpleDynamoProvider.queryKey, SimpleDynamoProvider.queryValue};
 //                matrixCursor.addRow(results);
@@ -527,6 +577,9 @@ public class SimpleDynamoProvider extends ContentProvider {
         dynamoList = new DynamoList<String>();
         String hash = "";
         checkIfNodeIsRecovered();
+        isRecoveryDone = !bRecover; // if node has recoverd, then wait until we get reply from everyone regarding the responses
+        Log.e(TAG,"Recover tag " + isRecoveryDone);
+
         for(int i=0; i < AVD_LIST.length; i++) {
             hash = genHash(String.valueOf(AVD_LIST[i]));
             //Log.e(TAG,"port " + String.valueOf(AVD_LIST[i]) + " hash " + hash);
