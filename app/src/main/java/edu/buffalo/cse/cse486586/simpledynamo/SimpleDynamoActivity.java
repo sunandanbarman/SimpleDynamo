@@ -19,6 +19,7 @@ public class SimpleDynamoActivity extends Activity {
 	public static final String VALUE_FIELD = "value";
 	public static final String PORT        = "port";
 	public static final String REPLICATE   = "replicate";
+	public static final String VERSION     = "version";
 	public static SimpleDynamoActivity singleActivity;
 
 	public static Uri contentURI;

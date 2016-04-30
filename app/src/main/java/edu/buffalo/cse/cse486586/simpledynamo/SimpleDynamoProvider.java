@@ -2,6 +2,7 @@ package edu.buffalo.cse.cse486586.simpledynamo;
 
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.net.SocketImplFactory;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Formatter;
@@ -10,6 +11,7 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -21,6 +23,8 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.telephony.TelephonyManager;
 import android.util.Log;
+
+import javax.security.auth.login.LoginException;
 
 /**
  * For phase 1 : Almost all the operations remain the same as Chord DHT assignment, except that instead of inserting
@@ -61,7 +65,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     public static String node_id = "";
     public static String myPort = "";
 
-    public static final int TIMEOUT          = 1500;
+    public static final int TIMEOUT          = 2500;
     public static final int MAX_MSG_LENGTH   = 40000; //HUGE: as the whole DB data is dumped  as a string
     public static final int SERVER_PORT      = 10000;
 
@@ -87,9 +91,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     /*Helpers for query() operation*/
     public static boolean queryDone = false;
-    public static String queryKey, queryValue; // stores the result sent by remote avd after querying its database
+    public static String queryKey, queryValue, queryVersions; // stores the result sent by remote avd after querying its database
     /*Helpers for recovery operations*/
-    public static int recoveryCount       = 0;
+
+    public static ConcurrentHashMap<String,String> insertBuffer; //only use in phase 6
+    public static boolean bOwnRecovery   = false;
+    public static int recoveryCount      = 0;
     public static boolean isRecoveryDone = false;
     public static HashSet<String> failedAVDList;
     public static boolean bRecover        = false;
@@ -337,6 +344,9 @@ public class SimpleDynamoProvider extends ContentProvider {
         Log.e(TAG,"Lets start with insert");
         String key  = values.get(SimpleDynamoActivity.KEY_FIELD).toString();
         String value= values.get(SimpleDynamoActivity.VALUE_FIELD).toString();
+        Log.e(TAG,"Inserting " + key + "=" + value + " pair into insertBuffer ");
+        insertBuffer.put(key,value);
+
         Log.e(TAG,"INSERT--->" +  "key " + key + " : " + value);
         String location = getLocationOfMessage(key);
         //Log.e(TAG,"Found location " + location);
@@ -377,10 +387,10 @@ public class SimpleDynamoProvider extends ContentProvider {
         //Log.e(TAG,"askForResponse portHash " + portHash);
         message.remotePort = dynamoList.getPortFromPortHash(portHash);
         //Log.e(TAG,"askForResponse for " + message.key + " from " + message.remotePort);
-        if (failedAVDList.contains(message.remotePort)) {
-            Log.e(TAG,"Not waiting for query response for " + message.remotePort + "..AVD has failed !");
-            return false;
-        }
+//        if (failedAVDList.contains(message.remotePort)) {
+//            Log.e(TAG,"Not waiting for query response for " + message.remotePort + "..AVD has failed !");
+//            return false;
+//        }
         Log.e("askForResponse","To ask " + message.remotePort + " for key " + message.key);
         queryDone = false;
         new ClientTask().execute(message);
@@ -402,8 +412,8 @@ public class SimpleDynamoProvider extends ContentProvider {
         }
         return false;
     }
-    private void addLocalDataToMatrixCursor(MatrixCursor matrixCursor) {
-        Cursor c= returnLocalData(null);
+    private void addLocalDataToMatrixCursor(String selection,MatrixCursor matrixCursor) {
+        Cursor c= returnLocalData(selection);
         if (c == null) {
             return;
         }
@@ -424,7 +434,7 @@ public class SimpleDynamoProvider extends ContentProvider {
         c.close();
     }
     @Override
-    public Cursor query(Uri uri, String[] projection, String selection,
+    public synchronized Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
         while(!isRecoveryDone) {
             synchronized (recoveryLock) {
@@ -441,7 +451,10 @@ public class SimpleDynamoProvider extends ContentProvider {
         Log.e(TAG,"query is "  + selection);
         if (selection.equalsIgnoreCase(SimpleDynamoActivity.LDumpSelection)) { //Local dump
             Log.e(TAG,"Local dump data");
-            c = returnLocalData(null);
+            MatrixCursor matrixCursor = new MatrixCursor(new String[]{SimpleDynamoActivity.KEY_FIELD,SimpleDynamoActivity.VALUE_FIELD});
+            addLocalDataToMatrixCursor(null,matrixCursor);
+            return matrixCursor;
+            //c = returnLocalData(null);
         }
         else if (selection.equalsIgnoreCase(SimpleDynamoActivity.GDumpSelection)) { //global dump
             Log.e(TAG,"GDump selection parameter , ask for all the data");
@@ -449,7 +462,7 @@ public class SimpleDynamoProvider extends ContentProvider {
             Message message = new Message(selection,"dummy",QUERY_GET_DATA,myPort,"dummy","-1");
 
             /*Get local data first- we can avoid needless messages for getting local data*/
-            addLocalDataToMatrixCursor(matrixCursor);
+            addLocalDataToMatrixCursor(null,matrixCursor);
             for(String node:dynamoList) {
                 if (node.equalsIgnoreCase(node_id)) {
                     Log.e(TAG,"Skip local node.. its already done ");
@@ -464,28 +477,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 
                 String secondSucc = dynamoList.getSuccessor(firstSucc);
                 askForResponse(matrixCursor,message,secondSucc);
-                //String remotePort = dynamoList.getPortFromPortHash(node);
-
-                //message.remotePort = remotePort;
-//                Log.e(TAG,"GDump parameter for node " + remotePort);
-//                new ClientTask().execute(message);
-//                waitForResponse();
-//                if (failedAVDList.contains(remotePort)) {
-//                    Log.e(TAG,"Not waiting for query response for " + remotePort + "..AVD has failed !");
-//                    //continue;
-//                    Log.e(TAG,"Ask ");
-//                }
-//                if (!SimpleDynamoProvider.queryKey.equalsIgnoreCase(SimpleDynamoProvider.EMPTY)) {
-//                    String[] keyArr = SimpleDynamoProvider.queryKey.split(":");
-//                    String[] valArr = SimpleDynamoProvider.queryValue.split(":");
-//
-//                    for(int i=0; i < keyArr.length; i++) {
-//                        String[] results  = new String[]{keyArr[i],valArr[i]};
-//                        matrixCursor.addRow(results);
-//                    }
-//                } else {
-//                    Log.e(TAG,"No data in " + message.remotePort);
-//                }
 
             }
             return matrixCursor;
@@ -518,6 +509,20 @@ public class SimpleDynamoProvider extends ContentProvider {
                             } else
                                 Log.e(TAG,"Did not get result from " + node + "..Next iteration starts !");
                         }
+                        Log.e(TAG,"insertBuffer  -->" + insertBuffer.get(message.key));
+//                        if (insertBuffer.get(message.key) != null) {
+//                            if (!insertBuffer.get(message.key).equalsIgnoreCase(SimpleDynamoProvider.queryValue)) {
+//                                Log.e(TAG,"Message " + insertBuffer.get(message.key) + " did not match " + SimpleDynamoProvider.queryValue);
+//                                matrixCursor = new MatrixCursor(new String[]{SimpleDynamoActivity.KEY_FIELD, SimpleDynamoActivity.VALUE_FIELD});
+//                                bResult = false;
+//                            } else {
+//
+//                                Log.e(TAG,"Matched " + insertBuffer.get(message.key) + " with " + SimpleDynamoProvider.queryValue);
+//                                //insertBuffer.remove(message.key);
+//                            }
+//                        } else {
+//                            Log.e(TAG,"Not originally inserted here "+ message.key);
+//                        }
                         if (bResult)
                             break;
                         try {
@@ -529,10 +534,6 @@ public class SimpleDynamoProvider extends ContentProvider {
                 }
                 bResult = false;
                 Log.e("QueryResponse","Final response " + SimpleDynamoProvider.queryKey  + "=" + SimpleDynamoProvider.queryValue);
-//                String[] results = new String[]{SimpleDynamoProvider.queryKey, SimpleDynamoProvider.queryValue};
-//                matrixCursor.addRow(results);
-//                new ClientTask().execute(message);
-//                waitForResponse();
 //                synchronized (lock)
 //                {
 //                    SimpleDynamoActivity.getInstance().setText("\n*** QUERY RESULTS **** =" + SimpleDynamoProvider.queryKey + " :: " +
@@ -541,10 +542,13 @@ public class SimpleDynamoProvider extends ContentProvider {
                 return matrixCursor;
 
             } else {
-                Log.e(TAG,"Found in local DB itself !");
-            }
+                Log.e(TAG, "Found in local DB itself !");
+
+                MatrixCursor matrixCursor = new MatrixCursor(new String[]{SimpleDynamoActivity.KEY_FIELD,SimpleDynamoActivity.VALUE_FIELD});
+                addLocalDataToMatrixCursor(selection,matrixCursor);
+                return matrixCursor;}
         }
-        return c;
+        //return c;
     }
     public void checkIfNodeIsRecovered() {
         //Log.e(TAG,"checkIfNodeIsRecovered");
@@ -567,6 +571,7 @@ public class SimpleDynamoProvider extends ContentProvider {
         sql = SQLHelperClass.getInstance(getContext());
         myPort = getMyPort();
         createServerSocket();
+        insertBuffer = new ConcurrentHashMap<String, String>();
         if (singleInstance == null) {
             singleInstance = this;
         }
@@ -586,12 +591,39 @@ public class SimpleDynamoProvider extends ContentProvider {
             dynamoList.add(genHash(String.valueOf(AVD_LIST[i])));
             Message message = new Message("dummy","dummy",RECOVER,myPort,String.valueOf(REMOTE_PORT[i]),"-1");
             if (bRecover) {
-                if (REMOTE_PORT[i] == Integer.valueOf(myPort)) { //dont ask yourself, thats stupid
+                if (REMOTE_PORT[i] == Integer.valueOf(myPort)) { //dont ask yourself, thats stupid, instead only check the buffer table
                     continue;
                 }
                 Log.e(TAG,"Sending recovery message to " + REMOTE_PORT[i]);
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,message);
             }
+
+        }
+        if (bRecover) {
+            /*Check local buffer table, and send across any messages still left to be replicated*/
+            Cursor cursor = sql.getBufferData(null, null, null, null);
+            if (cursor == null) {
+                Log.e(TAG,"God knows what happened !");
+                try {
+                    throw new Exception();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+            if (cursor.getCount() > 0 ) {
+                cursor.moveToFirst();
+                int keyIndex  = cursor.getColumnIndex(SimpleDynamoActivity.KEY_FIELD);
+                int valueIndex= cursor.getColumnIndex(SimpleDynamoActivity.VALUE_FIELD);
+                while(!cursor.isAfterLast()) {
+                    String key  = cursor.getString(keyIndex);
+                    String value= cursor.getString(valueIndex);
+                    Message message = new Message(key,value,INSERT,myPort,myPort,"2");
+                    sendMessageToRemotePort(message);
+                }
+                bOwnRecovery = true;
+            }
+            cursor.close();
+
         }
         //bRecover = false;
         /**

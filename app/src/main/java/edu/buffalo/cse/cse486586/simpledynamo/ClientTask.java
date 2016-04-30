@@ -31,10 +31,10 @@ public class ClientTask extends AsyncTask<Message,Void,Void> {
             return null;
         }
 
-        if (SimpleDynamoProvider.failedAVDList.contains(message.remotePort)) {
-            Log.e(TAG,"NOT sending message to " + message.remotePort + " as port is dead !");
-            return null;
-        }
+//        if (SimpleDynamoProvider.failedAVDList.contains(message.remotePort)) {
+//            Log.e(TAG,"NOT sending message to " + message.remotePort + " as port is dead !");
+//            return null;
+//        }
         Socket socket;
         OutputStream outputStream;
         PrintWriter printWriter;
@@ -65,12 +65,15 @@ public class ClientTask extends AsyncTask<Message,Void,Void> {
             }
 
             /*Wait for final response here*/
-            reader      = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            msgIncoming = reader.readLine();
-            if ((msgIncoming.equals(null)) && !msgIncoming.equals("")) {//somehow required to catch process is dead scenario
-                //Log.e(TAG,"CLIENT TASK msgReceived " + msgIncoming);
-            }
-
+//            reader      = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+//            msgIncoming = reader.readLine();
+//            if ((msgIncoming.equals(null)) && !msgIncoming.equals("")) {//somehow required to catch process is dead scenario
+//                //Log.e(TAG,"CLIENT TASK msgReceived " + msgIncoming);
+//            }
+//            Log.e(TAG,"Everything done in ServerTask for " + message.toString());
+//            if (SimpleDynamoProvider.failedAVDList.contains(message.remotePort)) { //probably a miss on detection, remove from failureList
+//                SimpleDynamoProvider.failedAVDList.remove(message.remotePort);
+//            }
             socket.close();
         } catch(SocketTimeoutException ex) {
             ex.printStackTrace();
